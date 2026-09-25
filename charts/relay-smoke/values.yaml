@@ -1,0 +1,5 @@
+# -- Extra labels added to every resource.
+commonLabels: {}
+# -- Build metadata published in the ConfigMap.
+buildInfo:
+  environment: local

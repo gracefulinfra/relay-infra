@@ -1,0 +1,12 @@
+extends: default
+ignore: |
+  charts/*/templates/
+  node_modules/
+rules:
+  document-start: disable
+  truthy:
+    allowed-values: ["true", "false", "on"]
+  line-length:
+    max: 140
+  comments:
+    min-spaces-from-content: 1

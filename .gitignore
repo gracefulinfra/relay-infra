@@ -1,0 +1,10 @@
+.DS_Store
+/bin/
+/dist/
+/out/
+/coverage/
+node_modules/
+*.out
+.env
+.env.*
+!.env.example

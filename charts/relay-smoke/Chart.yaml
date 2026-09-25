@@ -1,0 +1,6 @@
+apiVersion: v2
+name: relay-smoke
+description: Bootstrap chart (P0-01) that exercises helm lint and kubeconform in CI. P0-05 replaces it.
+type: application
+version: 0.1.0
+appVersion: "0.0.0"
