@@ -26,6 +26,8 @@ spec:
             requests: {cpu: 10m, memory: 32Mi}
             limits: {memory: 128Mi}
         certController:
+          # Readiness waits for the CRD reconcile; the 5m default made every cluster restart wait up to 5 minutes.
+          requeueInterval: 30s
           resources:
             requests: {cpu: 10m, memory: 32Mi}
             limits: {memory: 128Mi}

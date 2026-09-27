@@ -7,7 +7,9 @@ metadata:
   name: relay-proxy
   namespace: envoy-gateway-system
   annotations:
-    argocd.argoproj.io/sync-wave: "-60"
+    # Must exist before the GatewayClass that references it: Envoy Gateway does not re-check a
+    # GatewayClass it rejected for a missing EnvoyProxy.
+    argocd.argoproj.io/sync-wave: "-65"
 spec:
   provider:
     type: Kubernetes
