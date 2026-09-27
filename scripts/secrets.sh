@@ -30,7 +30,6 @@ put_literal() {
   log "created secret $NS/$name"
 }
 
-rand() { openssl rand -base64 96 | tr -dc 'A-Za-z0-9' | cut -c "1-${1:-32}"; }
 
 # --- Local CA (cert-manager ClusterIssuer relay-issuer) ---------------------------------------------
 ca_dir="$RELAY_HOME/ca"

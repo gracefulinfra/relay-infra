@@ -29,8 +29,48 @@ jobs:
           # renovate: datasource=golang-version depName=go
           go-version: 1.27.1
           cache: false
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          # renovate: datasource=github-releases depName=golangci/golangci-lint
+          version: v2.14.0
+          install-only: true
       - run: make lint
       - run: make test
+      - run: make vuln
+
+  # P0-06: the S3 conformance suite against the SeaweedFS version platform/seaweedfs deploys, started in
+  # Docker with per-run random credentials. Any hard-case failure fails the job; the report is attached.
+  s3-conformance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # renovate: datasource=golang-version depName=go
+          go-version: 1.27.1
+          cache: false
+      - name: make conformance-s3
+        shell: bash # -eo pipefail, so a failing suite fails the step despite tee
+        run: |
+          make conformance-s3 ARGS="-target=seaweedfs-4.47 -report-dir=$RUNNER_TEMP/s3-conformance" 2>&1 | tee conformance.log
+      - name: Report
+        if: always()
+        run: |
+          report=$(ls "$RUNNER_TEMP"/s3-conformance/*.md 2>/dev/null | head -1)
+          if [ -n "$report" ]; then cat "$report"; else echo "No report was written."; fi >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: s3-conformance
+          path: |
+            ${{ runner.temp }}/s3-conformance/
+            conformance.log
+          if-no-files-found: warn
 
   # The "clean machine" run: a fresh runner creates the k3d cluster, reconciles envs/local from this
   # commit (LOCAL_GIT=1 serves the checkout from the in-cluster git server), and runs the smoke test.

@@ -34,7 +34,8 @@ Internal services (PostgreSQL, SeaweedFS S3, the Argo Workflows UI) are not rout
 | --- | --- |
 | Docker | Docker Desktop needs at least 8 GB of memory (see [docs/laptop-profile.md](docs/laptop-profile.md)). Host ports 80, 443, and 5001 must be free |
 | k3d 5.9.x, kubectl, Helm 4.x | Pinned versions: [relay-contracts/docs/version-matrix.md](https://github.com/gracefulinfra/relay-contracts/blob/main/docs/version-matrix.md) |
-| Go 1.27 | Installs the pinned `yq` and `kubeconform` into `.local/bin` on first use |
+| Go 1.27 | Installs the pinned `yq` and `kubeconform` into `.local/bin` on first use, and runs the conformance suites |
+| golangci-lint 2.14.0 | `make lint` only |
 | `make`, `git`, `curl`, `jq`, `openssl`, `envsubst` (gettext) | `envsubst` ships with `brew install gettext` on macOS |
 | `pipx` | `make lint` only (pinned yamllint) |
 
@@ -75,7 +76,8 @@ platform/      one directory per platform service: an Argo CD Application (Helm 
                plus the provider-neutral manifests that configure it
 apps/          Relay app charts (from P1-01)
 envs/          Kustomize overlays: local (k3d), provider-a and provider-b (compile-only stubs)
-scripts/       up, down, secrets, local-git, wait-apps, smoke, validate
+conformance/   test suites a storage or cluster target must pass before Relay uses it (s3/: P0-06)
+scripts/       up, down, secrets, local-git, wait-apps, smoke, validate, s3-conformance
 ```
 
 How it fits together:
@@ -102,14 +104,19 @@ More detail: [docs/platform.md](docs/platform.md).
 | `make keycloak-test-users` | Print the Keycloak test users and the staff TOTP enrolment URI |
 | `make sync` | `LOCAL_GIT=1` only: push a working-tree snapshot and refresh Argo CD |
 | `make stop` / `make down` | Stop the cluster and keep it (a cached start), or delete it |
-| `make test` | Render every env overlay and every Helm Application in it, then run kubeconform `-strict` with CRD schemas generated from the charts. It also fails if any overlay renders a Secret with data |
-| `make lint` | yamllint, shellcheck, and `helm lint --strict` on `apps/*` (skipped until P1-01 adds a chart) |
+| `make test` | Render every env overlay and every Helm Application in it, then run kubeconform `-strict` with CRD schemas generated from the charts. It also fails if any overlay renders a Secret with data. Then `go test -race ./...` (the conformance harness's unit tests) |
+| `make lint` | yamllint, shellcheck, `helm lint --strict` on `apps/*` (skipped until P1-01 adds a chart), and golangci-lint 2.14.0 |
+| `make vuln` | govulncheck on the Go module |
+| `make conformance-s3` | The [S3 conformance suite](conformance/s3/README.md) against SeaweedFS in Docker. `ARGS="-target=<name>"` writes a report |
+| `make conformance-s3-cluster` | The same suite against the k3d cluster's SeaweedFS |
 | `make build`, `make image` | Skipped: no published artifacts |
 
 ## CI
 
-`.github/workflows/ci.yml` runs two jobs:
+`.github/workflows/ci.yml` runs three jobs:
 
-- `validate`: `make lint` and `make test`.
+- `validate`: `make lint`, `make test`, and `make vuln`.
+- `s3-conformance`: `make conformance-s3`. Any hard-case failure fails the job; the report is in the job
+  summary and the `s3-conformance` artifact.
 - `e2e`: `LOCAL_GIT=1 scripts/up.sh` and `scripts/smoke.sh` on a fresh `ubuntu-24.04` runner. This is
   the clean-machine run; the job summary records timings and per-pod memory.
