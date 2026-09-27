@@ -21,7 +21,7 @@ Measured with `kubectl top` and `docker stats` once `make smoke` passed. "Node a
 | Stage | Pods (sum) | Node anon | Largest pods |
 | --- | --- | --- | --- |
 | P0-05 PR1: Argo CD, ESO, cert-manager, Envoy Gateway | ≈1.1 GiB | ≈2.1 GiB | argocd-application-controller 400–610 Mi, argocd-repo-server ≈100 Mi |
-| P0-05 PR2: + CNPG ×2, SeaweedFS, Keycloak, Argo Workflows | _pending_ | _pending_ | |
+| P0-05 PR2: + CNPG ×2, SeaweedFS, Keycloak, Argo Workflows | ≈2.3 GiB | ≈4.4 GiB | keycloak ≈630 Mi, argocd-application-controller ≈530 Mi, each PostgreSQL instance ≈110–130 Mi, seaweedfs ≈100 Mi |
 | P0-05 PR3: + Prometheus, Grafana, OTel Collector, Tempo | _pending_ | _pending_ | |
 
 ## Start-up timings
@@ -30,6 +30,7 @@ The target is ≤ 10 minutes for `make up` on this machine. It's a benchmark, no
 
 | Stage | Cold start | Cached start |
 | --- | --- | --- |
+| P0-05 PR2 | **4m 56s** (same procedure; platform sync 3m 47s, about 100 s of it ESO bootstrapping its webhook certificate) | **55s** |
 | P0-05 PR1 | **2m 45s** (`make down`, k3s image and `.local/` tools deleted; container images pulled from the internet) | **41s** (`make stop` → `make up`) |
 
 - **Cold start**: `make down`, remove the k3s image from Docker and delete `.local/` (tool binaries and
@@ -38,7 +39,10 @@ The target is ≤ 10 minutes for `make up` on this machine. It's a benchmark, no
   mostly k3s restarting plus Argo CD re-reconciling.
 - Timings come from the phase table that `scripts/up.sh` prints. The raw logs are attached to the PR.
 
+Cached starts were 4m 39s until the ESO cert-controller's CRD requeue interval dropped from 5m to 30s:
+its readiness waits for that loop, and `external-secrets` gated the whole platform.
+
 ## Serial heavy jobs
 
 Heavy media jobs (Argo Workflows, from P1-05) run one at a time locally: the workflow controller's
-parallelism is set to 1 in `envs/local` (P0-05 PR2).
+parallelism is set to 1 in `envs/local`.

@@ -12,3 +12,8 @@ Format: `- [ ] (<prompt that found it>) <what> — <why it matters>`.
 - [ ] (P0-05) The Argo CD `admin` user and the Argo CD UI route are for local use only. Wire Argo CD SSO to Keycloak `relay-staff` and disable `admin` outside `local`. Owner: P1-02 / P1-19.
 - [ ] (P0-05) Speed up `make up` after `make down` with a pull-through registry cache (k3d `registries.create.proxy` for docker.io, quay.io, ghcr.io, registry.k8s.io). Today only `make stop` → `make up` reuses images.
 - [ ] (P0-05) Envoy Gateway was pinned to 1.9.1 rather than the 1.8.x baseline in `01-CONVENTIONS.md`, because 1.9.x is the current minor. Update the conventions baseline table.
+- [ ] (P0-05) Run SeaweedFS as non-root with a read-only root filesystem (the upstream image runs as root). Owner: P1-19.
+- [ ] (P0-05) Pin third-party chart images by digest (charts pin them by tag through the chart version), or enforce it at admission. Owner: P1-19.
+- [ ] (P0-05) Add NetworkPolicies for the platform data plane (SeaweedFS, CNPG clusters, the Argo Workflows controller). Include the CNPG operator's instance-manager port and DNS. Keycloak and the local git server already have one. Owner: P1-19.
+- [ ] (P0-05) Remove the Keycloak test users from any non-local environment (realm JSON `users` and `ExternalSecret/keycloak-test-users`). Owner: P0-07.
+- [ ] (P0-05) Replace realm import (which skips realms that already exist) with declarative realm management (keycloak-config-cli or the admin API) so realm changes reconcile through GitOps. Owner: P1-02.

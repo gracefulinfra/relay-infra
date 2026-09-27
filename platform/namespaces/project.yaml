@@ -14,6 +14,8 @@ spec:
     - https://charts.jetstack.io
     - https://charts.external-secrets.io
     - docker.io/envoyproxy
+    - https://cloudnative-pg.github.io/charts
+    - https://seaweedfs.github.io/seaweedfs/helm
   destinations:
     - server: https://kubernetes.default.svc
       namespace: "*"

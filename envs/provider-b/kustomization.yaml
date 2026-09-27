@@ -8,6 +8,11 @@ resources:
   - ../../platform/external-secrets
   - ../../platform/envoy-gateway
   - ../../platform/cert-manager
+  - ../../platform/cloudnative-pg
+  - ../../platform/seaweedfs
+  - ../../platform/postgres
+  - ../../platform/keycloak
+  - ../../platform/argo-workflows
 patches:
   # Base domain.
   - target: {kind: Gateway, name: relay}
@@ -54,3 +59,36 @@ patches:
         path: /spec/provider/kubernetes/envoyService/annotations
         value:
           relay.dev/load-balancer: PLACEHOLDER_LB_ANNOTATIONS
+  - target: {kind: HTTPRoute, name: keycloak}
+    patch: |-
+      - {op: replace, path: /spec/hostnames/0, value: auth.relay.provider-b.example}
+  - target: {kind: Deployment, name: keycloak}
+    patch: |-
+      - {op: replace, path: /spec/template/spec/containers/0/env/0/value, value: "https://auth.relay.provider-b.example"}
+  # S3 endpoint for CNPG backups and Argo Workflows artifacts.
+  - target: {kind: ObjectStore}
+    patch: |-
+      - {op: replace, path: /spec/configuration/endpointURL, value: "https://s3.provider-b.example"}
+  - target: {kind: Application, name: argo-workflows}
+    patch: |-
+      - {op: replace, path: /spec/source/helm/valuesObject/artifactRepository/s3/endpoint, value: "s3.provider-b.example"}
+      - {op: replace, path: /spec/source/helm/valuesObject/artifactRepository/s3/insecure, value: false}
+  # Managed S3 replaces SeaweedFS in provider environments.
+  - target: {kind: Application, name: seaweedfs}
+    patch: |-
+      $patch: delete
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata:
+        name: seaweedfs
+  - target: {kind: ExternalSecret, name: seaweedfs-s3-config}
+    patch: |-
+      $patch: delete
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: seaweedfs-s3-config
+  # Storage class for PostgreSQL volumes.
+  - target: {kind: Cluster, group: postgresql.cnpg.io}
+    patch: |-
+      - {op: add, path: /spec/storage/storageClass, value: PLACEHOLDER_STORAGE_CLASS}

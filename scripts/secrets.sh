@@ -10,7 +10,7 @@
 set -euo pipefail
 # shellcheck source=scripts/lib.sh
 source "$(dirname "$0")/lib.sh"
-require kubectl openssl
+require kubectl openssl jq
 
 NS=relay-secret-source
 
@@ -30,7 +30,7 @@ put_literal() {
   log "created secret $NS/$name"
 }
 
-rand() { openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c "${1:-32}"; }
+rand() { openssl rand -base64 96 | tr -dc 'A-Za-z0-9' | cut -c "1-${1:-32}"; }
 
 # --- Local CA (cert-manager ClusterIssuer relay-issuer) ---------------------------------------------
 ca_dir="$RELAY_HOME/ca"
@@ -50,6 +50,37 @@ if ! exists relay-local-ca; then
     --from-file=tls.crt="$ca_dir/relay-local-ca.crt" --from-file=tls.key="$ca_dir/relay-local-ca.key" >/dev/null
   log "created secret $NS/relay-local-ca"
 fi
+
+# --- S3 (SeaweedFS locally) -------------------------------------------------------------------------
+# One identity per consumer, each limited to its bucket. `s3-admin` is for operators and the smoke test.
+# name|bucket ("*" = all buckets, admin rights)
+s3_identities=("admin|*" "cnpg|relay-backups" "workflows|relay-media" "otel|relay-logs")
+for entry in "${s3_identities[@]}"; do
+  name=${entry%%|*}
+  put_literal "s3-$name" "access_key_id=relay-$name-$(rand 12)" "secret_access_key=$(rand 40)"
+done
+
+# SeaweedFS IAM config, rebuilt from the identity Secrets above so it always matches them.
+s3_config=$(for entry in "${s3_identities[@]}"; do
+  name=${entry%%|*} bucket=${entry#*|}
+  secret=$(kc -n "$NS" get secret "s3-$name" -o json)
+  jq -n --arg name "$name" --arg bucket "$bucket" \
+    --arg ak "$(jq -r '.data.access_key_id | @base64d' <<<"$secret")" \
+    --arg sk "$(jq -r '.data.secret_access_key | @base64d' <<<"$secret")" \
+    '{name: $name, credentials: [{accessKey: $ak, secretKey: $sk}],
+      actions: (if $bucket == "*" then ["Admin", "Read", "Write", "List", "Tagging"]
+                else ["Read:\($bucket)", "Write:\($bucket)", "List:\($bucket)", "Tagging:\($bucket)"] end)}'
+done | jq -cs '{identities: .}')
+kc -n "$NS" create secret generic seaweedfs-s3-config --from-literal=seaweedfs_s3_config="$s3_config" \
+  --dry-run=client -o yaml | kc apply -f - >/dev/null
+
+# --- Keycloak ---------------------------------------------------------------------------------------
+put_literal keycloak-admin "username=relay-admin" "password=$(rand 32)"
+# Test users imported into the realms. The staff user has TOTP pre-enrolled: Keycloak stores the raw
+# secret; authenticator apps get its base32 form (make keycloak-test-users prints the otpauth URI).
+put_literal keycloak-test-users \
+  "staff_username=staff.test" "staff_password=$(rand 24)" "staff_totp_secret=$(rand 20)" \
+  "listener_username=listener.test" "listener_password=$(rand 24)"
 
 # --- GHCR pull secret (optional) ---------------------------------------------------------------------
 if [ -n "${GHCR_TOKEN:-}" ] && ! exists ghcr-pull; then

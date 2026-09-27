@@ -17,7 +17,15 @@ make smoke     # health and Gateway reachability checks
 make down      # delete the cluster (the local CA in ~/.relay-local is kept)
 ```
 
-Then open <https://argocd.relay.localtest.me> (user `admin`, password from `make argocd-password`).
+Then open:
+
+| URL | What | Login |
+| --- | --- | --- |
+| <https://argocd.relay.localtest.me> | Argo CD | `admin`, password from `make argocd-password` |
+| <https://auth.relay.localtest.me/realms/relay-staff/account/> | Keycloak staff realm (TOTP required) | `make keycloak-test-users` prints the user, password, and TOTP enrolment URI |
+| <https://auth.relay.localtest.me/admin/> | Keycloak admin console | `relay-secret-source/keycloak-admin` |
+
+Internal services (PostgreSQL, SeaweedFS S3, the Argo Workflows UI) are not routed: use `kubectl port-forward`.
 `*.relay.localtest.me` resolves to 127.0.0.1 in public DNS, so there is nothing to add to `/etc/hosts`.
 
 ### Prerequisites
@@ -90,7 +98,8 @@ More detail: [docs/platform.md](docs/platform.md).
 | Target | What it does |
 | --- | --- |
 | `make up` / `make dev` | Create (or start) the cluster and wait until every Application is Synced/Healthy |
-| `make smoke` | `scripts/smoke.sh`: Argo CD, secrets, TLS, and Gateway checks |
+| `make smoke` | `scripts/smoke.sh`: Argo CD, secrets, TLS, Gateway, S3 privacy, CNPG health and an on-demand backup to S3, Keycloak TOTP login, and an Argo Workflow artifact |
+| `make keycloak-test-users` | Print the Keycloak test users and the staff TOTP enrolment URI |
 | `make sync` | `LOCAL_GIT=1` only: push a working-tree snapshot and refresh Argo CD |
 | `make stop` / `make down` | Stop the cluster and keep it (a cached start), or delete it |
 | `make test` | Render every env overlay and every Helm Application in it, then run kubeconform `-strict` with CRD schemas generated from the charts. It also fails if any overlay renders a Secret with data |

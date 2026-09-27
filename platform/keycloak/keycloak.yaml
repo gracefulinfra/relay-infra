@@ -1,0 +1,130 @@
+# Keycloak 26.7.4 (decision A9): realms relay-staff (TOTP required) and relay-listeners, imported from
+# realms/*.json at first start. Import skips realms that already exist, so later edits need a new
+# realm version or the admin API. Test-user secrets come from env placeholders, never from git.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: keycloak
+  labels: {app.kubernetes.io/name: keycloak}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-30"
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: keycloak}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: keycloak}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c
+          args: [start, --import-realm]
+          env:
+            - {name: KC_HOSTNAME, value: "https://auth.relay.example.invalid"}
+            - {name: KC_HTTP_ENABLED, value: "true"}
+            - {name: KC_PROXY_HEADERS, value: xforwarded}
+            - {name: KC_HEALTH_ENABLED, value: "true"}
+            - {name: KC_METRICS_ENABLED, value: "true"}
+            - {name: KC_CACHE, value: local}
+            - {name: KC_DB, value: postgres}
+            - {name: KC_DB_URL_HOST, value: keycloak-db-rw}
+            - {name: KC_DB_URL_DATABASE, value: keycloak}
+            - name: KC_DB_USERNAME
+              valueFrom: {secretKeyRef: {name: keycloak-db-app, key: username}}
+            - name: KC_DB_PASSWORD
+              valueFrom: {secretKeyRef: {name: keycloak-db-app, key: password}}
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              valueFrom: {secretKeyRef: {name: keycloak-admin, key: username}}
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom: {secretKeyRef: {name: keycloak-admin, key: password}}
+            - {name: JAVA_OPTS_KC_HEAP, value: "-XX:MaxRAMPercentage=60 -XX:InitialRAMPercentage=30"}
+            - name: RELAY_STAFF_USERNAME
+              valueFrom: {secretKeyRef: {name: keycloak-test-users, key: staff_username}}
+            - name: RELAY_STAFF_PASSWORD
+              valueFrom: {secretKeyRef: {name: keycloak-test-users, key: staff_password}}
+            - name: RELAY_STAFF_TOTP_SECRET
+              valueFrom: {secretKeyRef: {name: keycloak-test-users, key: staff_totp_secret}}
+            - name: RELAY_LISTENER_USERNAME
+              valueFrom: {secretKeyRef: {name: keycloak-test-users, key: listener_username}}
+            - name: RELAY_LISTENER_PASSWORD
+              valueFrom: {secretKeyRef: {name: keycloak-test-users, key: listener_password}}
+          ports:
+            - {name: http, containerPort: 8080}
+            - {name: management, containerPort: 9000}
+          startupProbe:
+            httpGet: {path: /health/started, port: management}
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /health/ready, port: management}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /health/live, port: management}
+            periodSeconds: 20
+          resources:
+            requests: {cpu: 100m, memory: 512Mi}
+            limits: {memory: 1Gi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: realms, mountPath: /opt/keycloak/data/import, readOnly: true}
+      volumes:
+        - name: realms
+          configMap: {name: keycloak-realms}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "-30"
+spec:
+  selector: {app.kubernetes.io/name: keycloak}
+  ports:
+    - {name: http, port: 8080, targetPort: http}
+    - {name: management, port: 9000, targetPort: management}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: keycloak
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "-30"
+spec:
+  parentRefs:
+    - {name: relay, namespace: relay-gateway, sectionName: https}
+  hostnames:
+    - auth.relay.example.invalid
+  rules:
+    - backendRefs:
+        - {name: keycloak, port: 8080}
+---
+# Only the Gateway's Envoy reaches the HTTP port. The management port (health, metrics) is for the
+# kubelet and in-cluster scrapers only and is never routed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: keycloak
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "-30"
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: keycloak}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: envoy-gateway-system}
+      ports: [{port: 8080}]
+    - ports: [{port: 9000}]

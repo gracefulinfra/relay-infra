@@ -1,0 +1,61 @@
+# Argo Workflows 4.1 (decision A7), installed namespace-scoped in relay-media: the controller only
+# watches relay-media, and workflow pods run as the argo-workflow ServiceAccount there. River
+# dispatches work to it from P1-05. Artifacts go to S3 under relay-media/argo-artifacts/.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argo-workflows
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-40"
+spec:
+  project: platform
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: relay-media
+  source:
+    repoURL: https://argoproj.github.io/argo-helm
+    chart: argo-workflows
+    targetRevision: 2.0.8 # Argo Workflows v4.1.4
+    helm:
+      releaseName: argo-workflows
+      valuesObject:
+        singleNamespace: true
+        workflow:
+          serviceAccount:
+            create: true
+            name: argo-workflow
+          rbac:
+            create: true
+        controller:
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+            limits: {memory: 256Mi}
+        executor:
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+        server:
+          enabled: true
+          # Not routed through the Gateway (internal admin UI). Client auth: callers bring a
+          # Kubernetes token, so the server holds no standing privileges.
+          authModes: [client]
+          resources:
+            requests: {cpu: 10m, memory: 48Mi}
+            limits: {memory: 192Mi}
+        useStaticCredentials: true
+        artifactRepository:
+          archiveLogs: true
+          s3:
+            bucket: relay-media
+            keyFormat: "argo-artifacts/{{workflow.creationTimestamp.Y}}/{{workflow.creationTimestamp.m}}/{{workflow.name}}/{{pod.name}}"
+            endpoint: s3.example.invalid
+            insecure: false
+            accessKeySecret: {name: s3-artifacts, key: access_key_id}
+            secretKeySecret: {name: s3-artifacts, key: secret_access_key}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true

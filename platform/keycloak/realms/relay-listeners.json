@@ -1,0 +1,24 @@
+{
+  "realm": "relay-listeners",
+  "displayName": "Relay",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": true,
+  "registrationEmailAsUsername": true,
+  "verifyEmail": false,
+  "resetPasswordAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "bruteForceProtected": true,
+  "users": [
+    {
+      "username": "${RELAY_LISTENER_USERNAME}",
+      "email": "listener.test@relay.example",
+      "emailVerified": true,
+      "firstName": "Listener",
+      "lastName": "Test",
+      "enabled": true,
+      "credentials": [{ "type": "password", "value": "${RELAY_LISTENER_PASSWORD}", "temporary": false }]
+    }
+  ]
+}
