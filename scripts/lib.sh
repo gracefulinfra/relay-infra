@@ -55,3 +55,6 @@ elapsed() {
   local s=$(($(now_s) - $1))
   printf '%dm %02ds' $((s / 60)) $((s % 60))
 }
+
+# rand [n]: n random alphanumeric characters (default 32).
+rand() { openssl rand -base64 96 | tr -dc 'A-Za-z0-9' | cut -c "1-${1:-32}"; }
