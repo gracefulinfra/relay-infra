@@ -1,0 +1,22 @@
+# The AppProject for platform services. Source repos are the pinned chart registries plus relay-infra itself.
+# P1-19 tightens destinations and cluster-scoped resource allow-lists.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-100"
+spec:
+  description: Relay platform services
+  sourceRepos:
+    - https://argoproj.github.io/argo-helm
+    - https://charts.jetstack.io
+    - https://charts.external-secrets.io
+    - docker.io/envoyproxy
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: "*"
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"

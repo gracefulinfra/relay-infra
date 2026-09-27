@@ -1,0 +1,46 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager
+  namespace: argocd
+  annotations:
+    # After envoy-gateway: the Gateway API CRDs must exist when cert-manager starts with enableGatewayAPI.
+    argocd.argoproj.io/sync-wave: "-80"
+spec:
+  project: platform
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cert-manager
+  source:
+    repoURL: https://charts.jetstack.io
+    chart: cert-manager
+    targetRevision: v1.21.2
+    helm:
+      releaseName: cert-manager
+      valuesObject:
+        crds:
+          enabled: true
+          keep: true
+        config:
+          apiVersion: controller.config.cert-manager.io/v1alpha1
+          kind: ControllerConfiguration
+          enableGatewayAPI: true
+        resources:
+          requests: {cpu: 10m, memory: 48Mi}
+          limits: {memory: 192Mi}
+        webhook:
+          resources:
+            requests: {cpu: 10m, memory: 24Mi}
+            limits: {memory: 96Mi}
+        cainjector:
+          resources:
+            requests: {cpu: 10m, memory: 48Mi}
+            limits: {memory: 192Mi}
+        startupapicheck:
+          enabled: false
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true

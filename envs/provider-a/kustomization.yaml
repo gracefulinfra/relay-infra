@@ -1,0 +1,56 @@
+# provider-a: compile-only stub (P0-05). Every provider-specific value is a placeholder under .example
+# (RFC 2606) or PLACEHOLDER_*; P0-07 turns one of these into a real second environment. See ../README.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../platform/namespaces
+  - ../../platform/argo-cd
+  - ../../platform/external-secrets
+  - ../../platform/envoy-gateway
+  - ../../platform/cert-manager
+patches:
+  # Base domain.
+  - target: {kind: Gateway, name: relay}
+    patch: |-
+      - {op: replace, path: /spec/listeners/0/hostname, value: "*.relay.provider-a.example"}
+      - {op: replace, path: /spec/listeners/1/hostname, value: "*.relay.provider-a.example"}
+  - target: {kind: HTTPRoute, name: argocd}
+    patch: |-
+      - {op: replace, path: /spec/hostnames/0, value: argocd.relay.provider-a.example}
+  # Secrets: the provider's secret manager or KMS-backed vault. The Vault-API provider stands in for it.
+  - target: {kind: ClusterSecretStore, name: relay-secrets}
+    patch: |-
+      - op: replace
+        path: /spec/provider
+        value:
+          vault:
+            server: https://secrets.provider-a.example
+            path: PLACEHOLDER_SECRETS_PATH
+            version: v2
+            auth:
+              kubernetes:
+                mountPath: PLACEHOLDER_AUTH_MOUNT
+                role: PLACEHOLDER_ROLE
+  # TLS: ACME with DNS-01 (wildcards need DNS-01). The DNS solver is provider-specific.
+  - target: {kind: ClusterIssuer, name: relay-issuer}
+    patch: |-
+      - op: replace
+        path: /spec
+        value:
+          acme:
+            server: https://acme-staging-v02.api.letsencrypt.org/directory
+            email: PLACEHOLDER@provider-a.example
+            privateKeySecretRef:
+              name: relay-issuer-account
+            solvers:
+              - dns01:
+                  webhook:
+                    groupName: acme.provider-a.example
+                    solverName: PLACEHOLDER_DNS_SOLVER
+  # Load balancer: provider annotations on the Envoy Service.
+  - target: {kind: EnvoyProxy, name: relay-proxy}
+    patch: |-
+      - op: add
+        path: /spec/provider/kubernetes/envoyService/annotations
+        value:
+          relay.dev/load-balancer: PLACEHOLDER_LB_ANNOTATIONS

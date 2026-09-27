@@ -1,0 +1,39 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: external-secrets
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-90"
+spec:
+  project: platform
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: external-secrets
+  source:
+    repoURL: https://charts.external-secrets.io
+    chart: external-secrets
+    targetRevision: 2.11.0
+    helm:
+      releaseName: external-secrets
+      valuesObject:
+        installCRDs: true
+        resources:
+          requests: {cpu: 10m, memory: 48Mi}
+          limits: {memory: 192Mi}
+        webhook:
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+        certController:
+          # Readiness waits for the CRD reconcile; the 5m default made every cluster restart wait up to 5 minutes.
+          requeueInterval: 30s
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true

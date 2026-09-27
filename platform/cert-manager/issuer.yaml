@@ -1,0 +1,9 @@
+# `relay-issuer` is the only ClusterIssuer name charts and Gateways refer to. Its spec is env-specific:
+# envs/local makes it a CA issuer over the script-generated local CA; provider overlays use ACME.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: relay-issuer
+  annotations:
+    argocd.argoproj.io/sync-wave: "-60"
+spec: {}
