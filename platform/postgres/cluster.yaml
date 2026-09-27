@@ -1,0 +1,88 @@
+# The `relay` PostgreSQL 17 cluster (relay-api from P1-01). Base backups and WAL go to S3 through the
+# barman-cloud plugin. The S3 endpoint and credentials are provider knobs (envs/README.md).
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: s3-backup
+  namespace: relay-db
+  annotations:
+    argocd.argoproj.io/sync-wave: "-60"
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: relay-secrets
+  target:
+    name: s3-backup
+  dataFrom:
+    - extract:
+        key: s3-cnpg
+---
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: relay-backups
+  namespace: relay-db
+  annotations:
+    argocd.argoproj.io/sync-wave: "-40"
+spec:
+  retentionPolicy: 7d
+  configuration:
+    destinationPath: s3://relay-backups/cnpg/
+    endpointURL: https://s3.example.invalid
+    s3Credentials:
+      accessKeyId: {name: s3-backup, key: access_key_id}
+      secretAccessKey: {name: s3-backup, key: secret_access_key}
+    wal:
+      compression: gzip
+    data:
+      compression: gzip
+  instanceSidecarConfiguration:
+    resources:
+      requests: {cpu: 10m, memory: 32Mi}
+      limits: {memory: 192Mi}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: relay
+  namespace: relay-db
+  annotations:
+    argocd.argoproj.io/sync-wave: "-40"
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.11-standard-trixie@sha256:09892aaed3919234cf5d6e86abea13870f82d39b84826e9f0926d859a8fba3dc
+  bootstrap:
+    initdb:
+      database: relay
+      owner: relay
+  storage:
+    size: 2Gi
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 512Mi}
+  postgresql:
+    parameters:
+      shared_buffers: 64MB
+      max_connections: "50"
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: relay-backups
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: relay-nightly
+  namespace: relay-db
+  annotations:
+    argocd.argoproj.io/sync-wave: "-30"
+spec:
+  cluster:
+    name: relay
+  schedule: "0 0 3 * * *"
+  backupOwnerReference: self
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io

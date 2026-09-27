@@ -5,7 +5,7 @@ SHELL := /bin/bash
 YAMLLINT_VERSION ?= 1.38.0
 SHELLCHECK_IMAGE ?= docker.io/koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d
 
-.PHONY: help up down stop dev sync smoke wait secrets argocd-password test lint build image
+.PHONY: help up down stop dev sync smoke wait secrets argocd-password keycloak-test-users test lint build image
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -35,6 +35,9 @@ secrets: ## (Re)create missing local secrets in relay-secret-source
 
 argocd-password: ## Print the initial Argo CD admin password
 	@kubectl --context k3d-relay -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo
+
+keycloak-test-users: ## Print the Keycloak test users and the staff TOTP enrolment URI
+	@scripts/keycloak.sh test-users
 
 test: ## Render every env overlay and Helm Application, validate with kubeconform
 	scripts/validate.sh render

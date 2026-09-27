@@ -1,0 +1,17 @@
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: seaweedfs-s3-config
+  namespace: seaweedfs
+  annotations:
+    argocd.argoproj.io/sync-wave: "-60"
+spec:
+  refreshInterval: 5m
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: relay-secrets
+  target:
+    name: seaweedfs-s3-config
+  dataFrom:
+    - extract:
+        key: seaweedfs-s3-config

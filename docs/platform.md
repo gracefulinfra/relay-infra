@@ -23,17 +23,41 @@ is one root per cluster, and everything else is a child resource with a sync wav
 | Wave | What |
 | --- | --- |
 | -100 | Namespaces (with their labels) and the `platform` AppProject |
-| -90 | Controllers with no dependencies: Argo CD itself, External Secrets Operator, Envoy Gateway (which also installs the Gateway API CRDs) |
+| -90 | Controllers with no dependencies: Argo CD itself, External Secrets Operator, Envoy Gateway (which also installs the Gateway API CRDs), the CloudNativePG operator |
 | -80 | cert-manager (after the Gateway API CRDs, because `enableGatewayAPI` needs them) |
 | -70 | Secret-store identity and `ClusterSecretStore/relay-secrets` |
-| -60 | `ExternalSecret`s, `ClusterIssuer/relay-issuer`, `GatewayClass`, `EnvoyProxy` |
-| -50 | `Gateway/relay` (cert-manager issues the listener certificate) |
-| -40 | `HTTPRoute`s |
+| -65 | `EnvoyProxy/relay-proxy` (before the GatewayClass that references it) |
+| -60 | `ExternalSecret`s, `ClusterIssuer/relay-issuer`, `GatewayClass`, the CNPG barman-cloud plugin (needs cert-manager) |
+| -50 | `Gateway/relay` (cert-manager issues the listener certificate), SeaweedFS (its PostSync hook creates the buckets) |
+| -40 | `HTTPRoute`s, CNPG `ObjectStore`s and `Cluster`s (`relay`, `keycloak-db`), Argo Workflows, the Keycloak realm ConfigMap |
+| -30 | Keycloak (needs its database), `ScheduledBackup`s |
 
 Argo CD waits for each wave to be Healthy before starting the next. A child Application counts as
 Healthy only through the `resource.customizations.health.argoproj.io_Application` check in the Argo CD
 values. `relay-root` retries with backoff, which covers webhooks whose Deployment reports ready shortly
 before their Service has endpoints.
+
+## Data, identity, and workflows
+
+| Service | Where | Notes |
+| --- | --- | --- |
+| SeaweedFS | `seaweedfs` | All-in-one pod (master, volume, filer, S3 on :8333), 10 Gi PVC. S3 auth is on. Buckets `relay-media`, `relay-feeds`, `relay-backups`, and `relay-logs` are all private. One identity per consumer (`cnpg`, `workflows`, `otel`), each limited to its bucket, plus `admin`. Not routed through the Gateway |
+| PostgreSQL `relay` | `relay-db` | CNPG 1.30, PostgreSQL 17.11, 1 instance. WAL and base backups go to `s3://relay-backups/cnpg/relay/` through the barman-cloud plugin, with a nightly `ScheduledBackup` and 7-day retention. The app credentials are in `relay-app` |
+| PostgreSQL `keycloak-db` | `keycloak` | Keycloak's own cluster, archived to `s3://relay-backups/cnpg/keycloak-db/` |
+| Keycloak | `keycloak` | 26.7.4 at `https://auth.<domain>`. Realms are imported from `platform/keycloak/realms/*.json` on first start (existing realms are skipped). `relay-staff` makes TOTP a default required action; `relay-listeners` allows self-registration. Test users: `make keycloak-test-users` |
+| Argo Workflows | `relay-media` | Namespace-scoped (`singleNamespace`). Workflows run as `argo-workflow`, and artifacts and logs go to `s3://relay-media/argo-artifacts/`. The server uses `client` auth and is not routed. Parallelism is 1 locally |
+
+On-demand backup of `relay`:
+
+```bash
+kubectl -n relay-db apply -f - <<'EOF'
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata: {name: manual-backup}
+spec: {cluster: {name: relay}, method: plugin, pluginConfiguration: {name: barman-cloud.cloudnative-pg.io}}
+EOF
+kubectl -n relay-db get backup manual-backup -w
+```
 
 ## Adding a platform service
 
@@ -55,9 +79,14 @@ before their Service has endpoints.
 | --- | --- |
 | `make up` stops at "Docker is not running", or k3d cannot bind 80/443/5001 | Start Docker Desktop, or free those ports. `lsof -nP -iTCP:443 -sTCP:LISTEN` shows who holds a port. |
 | `relay-root` sync errors mention `failed calling webhook ... no endpoints available` | A webhook (cert-manager or ESO) is still starting. `relay-root` retries with backoff; wait. If it lasts more than 5 minutes, check the webhook pod's logs. |
+| `GatewayClass relay` stays `Accepted=False, InvalidParameters` | It was created before `EnvoyProxy/relay-proxy` (wave -65 prevents this). Nudge it: `kubectl annotate gatewayclass relay relay.dev/reconcile=$(date +%s) --overwrite`. |
 | `external-secrets` shows Progressing for about 2 minutes on a fresh cluster | Expected: the cert-controller generates the webhook certificate, and the kubelet takes up to a minute to project it into the webhook pod. |
 | A resource stays OutOfSync right after changing Argo CD settings | The comparison cache is stale: `kubectl -n argocd annotate application relay-root argocd.argoproj.io/refresh=hard --overwrite`. Server-side diff is on (`controller.diff.server.side`), so API-server defaults are not drift. |
 | `make sync` changes don't show up | Argo CD only reads the `local` branch of the in-cluster git server. Check `kubectl -n relay-git logs deploy/git-server` for the push, then hard-refresh `relay-root`. |
 | Browser warns about the certificate | Trust `~/.relay-local/ca/relay-local-ca.crt` (README). `curl --cacert ~/.relay-local/ca/relay-local-ca.crt` works without trusting it. |
 | `ClusterSecretStore relay-secrets` is not Ready | `relay-secret-source` is missing Secrets or the `secret-reader` RBAC: rerun `make secrets`, then `kubectl describe clustersecretstore relay-secrets`. |
+| A `Backup` stays `running` or fails, or `ContinuousArchiving` is False | Check the plugin sidecar with `kubectl -n relay-db logs relay-1 -c plugin-barman-cloud`, and `kubectl -n cnpg-system logs deploy/barman-cloud-plugin-barman-cloud`. The usual causes are the `s3-backup` Secret not synced yet, or the S3 identity lacking rights on `relay-backups` (see `seaweedfs-s3-config`). |
+| Keycloak realm JSON changes are not applied | Import skips realms that already exist. Locally, `make down && make up`; otherwise use the admin console or API. The admin credentials are in `relay-secret-source/keycloak-admin`. |
+| `keycloak.sh login-staff` fails with "did not return an authorization code" | The code is time-based: check that the host clock is in sync. Keycloak also rejects a reused code, and the script waits for the next 30 s step when needed. Repeated failures can trigger brute-force lockout (10 failures); a successful login resets the count. |
+| A smoke workflow never finishes | `kubectl -n relay-media get wf`, then `kubectl -n relay-media logs deploy/argo-workflows-workflow-controller`. Parallelism is 1, so a stuck workflow blocks the queue: delete it. |
 | The local CA expired (825 days) or leaked | `rm -rf ~/.relay-local`, then `make down && make up`, and trust the new CA. |

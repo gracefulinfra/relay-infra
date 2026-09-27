@@ -7,6 +7,11 @@ resources:
   - ../../platform/external-secrets
   - ../../platform/envoy-gateway
   - ../../platform/cert-manager
+  - ../../platform/cloudnative-pg
+  - ../../platform/seaweedfs
+  - ../../platform/postgres
+  - ../../platform/keycloak
+  - ../../platform/argo-workflows
   - secret-source.yaml
   - local-ca.yaml
 patches:
@@ -28,3 +33,19 @@ patches:
   - target: {kind: EnvoyProxy, name: relay-proxy}
     patch: |-
       - {op: add, path: /spec/provider/kubernetes/envoyService/externalTrafficPolicy, value: Cluster}
+  - target: {kind: HTTPRoute, name: keycloak}
+    patch: |-
+      - {op: replace, path: /spec/hostnames/0, value: auth.relay.localtest.me}
+  - target: {kind: Deployment, name: keycloak}
+    patch: |-
+      - {op: replace, path: /spec/template/spec/containers/0/env/0/value, value: "https://auth.relay.localtest.me"}
+  # S3 endpoint for CNPG backups and Argo Workflows artifacts.
+  - target: {kind: ObjectStore}
+    patch: |-
+      - {op: replace, path: /spec/configuration/endpointURL, value: "http://seaweedfs-all-in-one.seaweedfs.svc:8333"}
+  - target: {kind: Application, name: argo-workflows}
+    patch: |-
+      - {op: replace, path: /spec/source/helm/valuesObject/artifactRepository/s3/endpoint, value: "seaweedfs-all-in-one.seaweedfs.svc:8333"}
+      - {op: replace, path: /spec/source/helm/valuesObject/artifactRepository/s3/insecure, value: true}
+      # Laptop profile: heavy media workflows run one at a time.
+      - {op: add, path: /spec/source/helm/valuesObject/controller/parallelism, value: 1}

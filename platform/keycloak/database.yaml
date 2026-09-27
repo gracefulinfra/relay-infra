@@ -1,0 +1,53 @@
+# Keycloak's own PostgreSQL cluster, separate from `relay`, with its own WAL archive in relay-backups.
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: relay-backups
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "-40"
+spec:
+  retentionPolicy: 7d
+  configuration:
+    destinationPath: s3://relay-backups/cnpg/
+    endpointURL: https://s3.example.invalid
+    s3Credentials:
+      accessKeyId: {name: s3-backup, key: access_key_id}
+      secretAccessKey: {name: s3-backup, key: secret_access_key}
+    wal:
+      compression: gzip
+    data:
+      compression: gzip
+  instanceSidecarConfiguration:
+    resources:
+      requests: {cpu: 10m, memory: 32Mi}
+      limits: {memory: 192Mi}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: keycloak-db
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "-40"
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.11-standard-trixie@sha256:09892aaed3919234cf5d6e86abea13870f82d39b84826e9f0926d859a8fba3dc
+  bootstrap:
+    initdb:
+      database: keycloak
+      owner: keycloak
+  storage:
+    size: 1Gi
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 384Mi}
+  postgresql:
+    parameters:
+      shared_buffers: 32MB
+      max_connections: "40"
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: relay-backups

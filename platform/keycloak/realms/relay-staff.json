@@ -1,0 +1,56 @@
+{
+  "realm": "relay-staff",
+  "displayName": "Relay staff",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "bruteForceProtected": true,
+  "failureFactor": 10,
+  "otpPolicyType": "totp",
+  "otpPolicyAlgorithm": "HmacSHA1",
+  "otpPolicyDigits": 6,
+  "otpPolicyPeriod": 30,
+  "otpPolicyLookAheadWindow": 1,
+  "requiredActions": [
+    {
+      "alias": "CONFIGURE_TOTP",
+      "name": "Configure OTP",
+      "providerId": "CONFIGURE_TOTP",
+      "enabled": true,
+      "defaultAction": true,
+      "priority": 10,
+      "config": {}
+    },
+    {
+      "alias": "UPDATE_PASSWORD",
+      "name": "Update Password",
+      "providerId": "UPDATE_PASSWORD",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 30,
+      "config": {}
+    }
+  ],
+  "users": [
+    {
+      "username": "${RELAY_STAFF_USERNAME}",
+      "email": "staff.test@relay.example",
+      "emailVerified": true,
+      "firstName": "Staff",
+      "lastName": "Test",
+      "enabled": true,
+      "credentials": [
+        { "type": "password", "value": "${RELAY_STAFF_PASSWORD}", "temporary": false },
+        {
+          "type": "otp",
+          "userLabel": "relay test authenticator",
+          "secretData": "{\"value\":\"${RELAY_STAFF_TOTP_SECRET}\"}",
+          "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}"
+        }
+      ]
+    }
+  ]
+}
