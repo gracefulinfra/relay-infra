@@ -7,33 +7,100 @@ The build is driven by a prompt series; see the prompt index (`prompts/00-INDEX.
 workspace) and the architecture decisions in
 [relay-contracts/adr](https://github.com/gracefulinfra/relay-contracts/tree/main/adr).
 
-## Status
-
-Bootstrapped by **P0-01**. This repo contains only the CI and tooling skeleton; there is no product code yet.
-
-## Quickstart
-
-Prerequisites: see [relay-contracts/docs/version-matrix.md](https://github.com/gracefulinfra/relay-contracts/blob/main/docs/version-matrix.md).
+## Quickstart (local k3d platform)
 
 ```bash
 git clone https://github.com/gracefulinfra/relay-infra.git
 cd relay-infra
-make test
-make lint
+make up        # k3d cluster + Argo CD + every platform service, reconciled from envs/local
+make smoke     # health and Gateway reachability checks
+make down      # delete the cluster (the local CA in ~/.relay-local is kept)
 ```
 
-| Target | What it does today |
+Then open <https://argocd.relay.localtest.me> (user `admin`, password from `make argocd-password`).
+`*.relay.localtest.me` resolves to 127.0.0.1 in public DNS, so there is nothing to add to `/etc/hosts`.
+
+### Prerequisites
+
+| Tool | Notes |
 | --- | --- |
-| `make test` | Renders every chart and validates it with `kubeconform -strict` against Kubernetes 1.36.4 |
-| `make lint` | `yamllint --strict` and `helm lint --strict` |
-| `make dev` | Pending: the k3d platform (`make up`) arrives with P0-05 |
-| `make build`, `make image` | Skipped: this repo has no build artifacts |
+| Docker | Docker Desktop needs at least 8 GB of memory (see [docs/laptop-profile.md](docs/laptop-profile.md)). Host ports 80, 443, and 5001 must be free |
+| k3d 5.9.x, kubectl, Helm 4.x | Pinned versions: [relay-contracts/docs/version-matrix.md](https://github.com/gracefulinfra/relay-contracts/blob/main/docs/version-matrix.md) |
+| Go 1.27 | Installs the pinned `yq` and `kubeconform` into `.local/bin` on first use |
+| `make`, `git`, `curl`, `jq`, `openssl`, `envsubst` (gettext) | `envsubst` ships with `brew install gettext` on macOS |
+| `pipx` | `make lint` only (pinned yamllint) |
 
-Requires `helm` 4.x, Go (to run the pinned kubeconform), and `pipx` (to run the pinned yamllint).
+### Which commit does Argo CD deploy?
 
-`charts/relay-smoke` is a bootstrap chart that only exists so the checks have something real to validate.
-P0-05 replaces it.
+Argo CD always reconciles from git, never from your disk:
+
+- **Default:** `https://github.com/gracefulinfra/relay-infra.git` at your current branch if it exists
+  on `origin`, otherwise `main`. Override it with `REPO_URL=` and `REVISION=`.
+- **`LOCAL_GIT=1 make up`:** an in-cluster git server (`bootstrap/local-git`) serves a snapshot of your
+  working tree, including uncommitted and untracked files (it follows `.gitignore`). After editing, run
+  `make sync` to push a new snapshot and hard-refresh Argo CD. CI uses this mode.
+
+### Trusting the local CA
+
+`scripts/secrets.sh` creates a local CA once in `~/.relay-local/ca/`, and cert-manager issues the
+Gateway's `*.relay.localtest.me` certificate from it. Trust it once to avoid browser warnings:
+
+```bash
+# macOS (asks for your password)
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ~/.relay-local/ca/relay-local-ca.crt
+```
+
+```bash
+# Debian/Ubuntu
+sudo cp ~/.relay-local/ca/relay-local-ca.crt /usr/local/share/ca-certificates/relay-local-ca.crt && sudo update-ca-certificates
+```
+
+Firefox keeps its own trust store: Settings → Privacy & Security → Certificates → Import. The CA is
+limited to `pathlen:0` and exists only on your machine. To remove it, delete it from the trust store and
+`rm -rf ~/.relay-local` (the next `make up` creates a new one).
+
+## Layout
+
+```text
+bootstrap/     k3d config, the relay-root app-of-apps template, the LOCAL_GIT git server
+platform/      one directory per platform service: an Argo CD Application (Helm chart + valuesObject)
+               plus the provider-neutral manifests that configure it
+apps/          Relay app charts (from P1-01)
+envs/          Kustomize overlays: local (k3d), provider-a and provider-b (compile-only stubs)
+scripts/       up, down, secrets, local-git, wait-apps, smoke, validate
+```
+
+How it fits together:
+
+1. `make up` creates the cluster, runs `scripts/secrets.sh`, installs Argo CD with Helm (chart and values
+   are read from `platform/argo-cd/application.yaml`), and applies `bootstrap/root-app.yaml`.
+2. `relay-root` renders `envs/<env>`, which is every platform Application plus its configuration.
+   Sync waves order CRDs before the resources that use them, and Argo CD then adopts its own Helm release.
+3. Anything that differs by provider is patched only in `envs/<env>/`. [envs/README.md](envs/README.md)
+   lists every knob.
+4. Secrets: [ADR-0007](https://github.com/gracefulinfra/relay-contracts/blob/main/adr/0007-secret-management.md).
+   External Secrets Operator reads a single `ClusterSecretStore`. Locally, that store is the
+   `relay-secret-source` namespace, which `scripts/secrets.sh` fills. Set `GHCR_TOKEN` (`read:packages`)
+   before `make up` to get the `ghcr-pull` secret for private images (ADR-0004).
+
+More detail: [docs/platform.md](docs/platform.md).
+
+## Make targets
+
+| Target | What it does |
+| --- | --- |
+| `make up` / `make dev` | Create (or start) the cluster and wait until every Application is Synced/Healthy |
+| `make smoke` | `scripts/smoke.sh`: Argo CD, secrets, TLS, and Gateway checks |
+| `make sync` | `LOCAL_GIT=1` only: push a working-tree snapshot and refresh Argo CD |
+| `make stop` / `make down` | Stop the cluster and keep it (a cached start), or delete it |
+| `make test` | Render every env overlay and every Helm Application in it, then run kubeconform `-strict` with CRD schemas generated from the charts. It also fails if any overlay renders a Secret with data |
+| `make lint` | yamllint, shellcheck, and `helm lint --strict` on `apps/*` (skipped until P1-01 adds a chart) |
+| `make build`, `make image` | Skipped: no published artifacts |
 
 ## CI
 
-`.github/workflows/ci.yml` runs the `validate` job (yamllint, helm lint, and kubeconform) on every PR and push.
+`.github/workflows/ci.yml` runs two jobs:
+
+- `validate`: `make lint` and `make test`.
+- `e2e`: `LOCAL_GIT=1 scripts/up.sh` and `scripts/smoke.sh` on a fresh `ubuntu-24.04` runner. This is
+  the clean-machine run; the job summary records timings and per-pod memory.

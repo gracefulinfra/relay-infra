@@ -1,0 +1,85 @@
+# Argo CD manages itself. scripts/up.sh installs the same chart and values with Helm first
+# (it reads them from this file), then this Application adopts the release.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argo-cd
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-90"
+spec:
+  project: platform
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  source:
+    repoURL: https://argoproj.github.io/argo-helm
+    chart: argo-cd
+    targetRevision: 10.9.2 # Argo CD v3.5.3
+    helm:
+      releaseName: argocd
+      valuesObject:
+        global:
+          networkPolicy:
+            create: true
+        configs:
+          params:
+            # TLS terminates at Envoy Gateway.
+            server.insecure: true
+            # Diff against the API server's dry-run result so defaulted fields (Gateway API, CRDs) are not drift.
+            controller.diff.server.side: "true"
+          cm:
+            admin.enabled: true
+            exec.enabled: false
+            statusbadge.enabled: false
+            timeout.reconciliation: 180s
+            # App-of-apps: report a child Application's health so sync waves wait for it.
+            resource.customizations.health.argoproj.io_Application: |
+              hs = {}
+              hs.status = "Progressing"
+              hs.message = ""
+              if obj.status ~= nil and obj.status.health ~= nil then
+                hs.status = obj.status.health.status
+                if obj.status.health.message ~= nil then
+                  hs.message = obj.status.health.message
+                end
+              end
+              return hs
+          repositories:
+            envoy-gateway-oci:
+              name: envoy-gateway
+              type: helm
+              url: docker.io/envoyproxy
+              enableOCI: "true"
+        dex:
+          enabled: false
+        notifications:
+          enabled: false
+        applicationSet:
+          replicas: 0
+        controller:
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 768Mi}
+        repoServer:
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 512Mi}
+        server:
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+            limits: {memory: 256Mi}
+        redis:
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+        redisSecretInit:
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 64Mi}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true

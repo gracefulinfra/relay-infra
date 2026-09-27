@@ -1,0 +1,89 @@
+# The single shared Gateway. Hostnames use the env's base domain; the base carries a placeholder
+# (relay.example.invalid) that every env overlay replaces. Provider-specific load balancer settings
+# live in the EnvoyProxy patch of each env.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: relay-proxy
+  namespace: envoy-gateway-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "-60"
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyDeployment:
+        replicas: 1
+        container:
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+            limits: {memory: 256Mi}
+      envoyService:
+        type: LoadBalancer
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: relay
+  annotations:
+    argocd.argoproj.io/sync-wave: "-60"
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+  parametersRef:
+    group: gateway.envoyproxy.io
+    kind: EnvoyProxy
+    name: relay-proxy
+    namespace: envoy-gateway-system
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: relay
+  namespace: relay-gateway
+  annotations:
+    argocd.argoproj.io/sync-wave: "-50"
+    # cert-manager's gateway-shim issues the listener certificate from the listener hostname.
+    cert-manager.io/cluster-issuer: relay-issuer
+spec:
+  gatewayClassName: relay
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      hostname: "*.relay.example.invalid"
+      allowedRoutes:
+        namespaces:
+          from: Same
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: "*.relay.example.invalid"
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: relay-wildcard-tls
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              relay.dev/gateway-access: "true"
+---
+# Plain HTTP only redirects to HTTPS.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: https-redirect
+  namespace: relay-gateway
+  annotations:
+    argocd.argoproj.io/sync-wave: "-40"
+spec:
+  parentRefs:
+    - name: relay
+      sectionName: http
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301

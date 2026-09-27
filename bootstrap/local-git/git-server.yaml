@@ -1,0 +1,90 @@
+# Applied by scripts/local-git.sh only when LOCAL_GIT=1. It is not part of the GitOps tree because it is the git source itself.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: relay-git
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: git-server
+  namespace: relay-git
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: git-server
+  namespace: relay-git
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {app.kubernetes.io/name: git-server}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: git-server}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: git-server
+          image: ${GIT_SERVER_IMAGE}
+          ports:
+            - {name: http, containerPort: 8080}
+          readinessProbe:
+            httpGet: {path: "/relay-infra.git/info/refs?service=git-upload-pack", port: http}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: repos, mountPath: /srv/git}
+            - {name: tmp, mountPath: /tmp}
+            - {name: run, mountPath: /run/lighttpd}
+            - {name: varlib, mountPath: /var/lib/lighttpd}
+      volumes:
+        - name: repos
+          persistentVolumeClaim: {claimName: git-server}
+        - {name: tmp, emptyDir: {}}
+        - {name: run, emptyDir: {}}
+        - {name: varlib, emptyDir: {}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: git-server
+  namespace: relay-git
+spec:
+  selector: {app.kubernetes.io/name: git-server}
+  ports:
+    - {name: http, port: 80, targetPort: http}
+---
+# Only Argo CD's repo-server may fetch. Pushes come through kubectl port-forward, which NetworkPolicy does not filter.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: git-server
+  namespace: relay-git
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: argocd}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: argocd-repo-server}
+      ports:
+        - {port: 8080}

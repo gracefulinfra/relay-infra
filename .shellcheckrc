@@ -1,0 +1,3 @@
+# SC2016: single-quoted $vars are intentional for envsubst allow-lists and yq/jq expressions.
+disable=SC2016
+external-sources=true

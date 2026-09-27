@@ -1,0 +1,29 @@
+# App-of-apps root. scripts/up.sh fills in the ${...} values with envsubst and applies it once;
+# everything else is reconciled from envs/${RELAY_ENV}.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: relay-root
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: ${REPO_URL}
+    targetRevision: ${REVISION}
+    path: envs/${RELAY_ENV}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - SkipDryRunOnMissingResource=true
+      - ServerSideApply=true
+    retry:
+      limit: 30
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 2m

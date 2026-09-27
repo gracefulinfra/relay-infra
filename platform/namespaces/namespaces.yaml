@@ -1,0 +1,49 @@
+# Every platform namespace is owned by the root app so labels (Gateway access, secret access) are declared in one place.
+# relay.dev/gateway-access=true lets a namespace attach HTTPRoutes to the shared HTTPS listener.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argocd
+  labels:
+    relay.dev/gateway-access: "true"
+  annotations:
+    argocd.argoproj.io/sync-wave: "-100"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: relay-secret-source
+  labels:
+    relay.dev/purpose: secret-source
+  annotations:
+    argocd.argoproj.io/sync-wave: "-100"
+    # scripts/secrets.sh writes the Secrets in here; Argo CD must never delete the namespace.
+    argocd.argoproj.io/sync-options: Delete=false
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: external-secrets
+  annotations:
+    argocd.argoproj.io/sync-wave: "-100"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: envoy-gateway-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "-100"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: relay-gateway
+  annotations:
+    argocd.argoproj.io/sync-wave: "-100"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cert-manager
+  annotations:
+    argocd.argoproj.io/sync-wave: "-100"

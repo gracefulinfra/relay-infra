@@ -1,0 +1,32 @@
+# Local k3d cluster for Relay: one k3s server, a local image registry, and host ports 80/443 on the
+# k3d load balancer so https://*.relay.localtest.me (which resolves to 127.0.0.1) reaches Envoy Gateway.
+# Traefik is disabled because Envoy Gateway is the only ingress. klipper servicelb stays enabled
+# and backs the Envoy LoadBalancer Service.
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: relay
+servers: 1
+agents: 0
+image: docker.io/rancher/k3s:v1.36.4-k3s1@sha256:edad48e12bf81c3a09ac1c05c0c0ffaaa22145980b989d6fae84543a76b83657
+ports:
+  - port: 80:80
+    nodeFilters: [loadbalancer]
+  - port: 443:443
+    nodeFilters: [loadbalancer]
+registries:
+  create:
+    name: relay-registry.localhost
+    host: 127.0.0.1
+    hostPort: "5001"
+options:
+  k3d:
+    wait: true
+    timeout: 180s
+  k3s:
+    extraArgs:
+      - arg: --disable=traefik
+        nodeFilters: [server:*]
+  kubeconfig:
+    updateDefaultKubeconfig: true
+    switchCurrentContext: false

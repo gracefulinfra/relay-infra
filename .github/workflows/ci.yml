@@ -31,3 +31,69 @@ jobs:
           cache: false
       - run: make lint
       - run: make test
+
+  # The "clean machine" run: a fresh runner creates the k3d cluster, reconciles envs/local from this
+  # commit (LOCAL_GIT=1 serves the checkout from the in-cluster git server), and runs the smoke test.
+  e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      # renovate: datasource=github-releases depName=k3d-io/k3d
+      K3D_VERSION: v5.9.0
+      # Update with K3D_VERSION: sha256 of k3d-linux-amd64 from the release checksums.txt.
+      K3D_SHA256: 06d8f25bc3a971c4eb29e0ff08429b180402db0f4dec838c9eac427e296800a0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          # renovate: datasource=github-releases depName=helm/helm
+          version: v4.3.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # renovate: datasource=golang-version depName=go
+          go-version: 1.27.1
+          cache: false
+      - name: Install k3d
+        run: |
+          curl -fsSLo /tmp/k3d "https://github.com/k3d-io/k3d/releases/download/${K3D_VERSION}/k3d-linux-amd64"
+          echo "${K3D_SHA256}  /tmp/k3d" | sha256sum -c -
+          sudo install -m 0755 /tmp/k3d /usr/local/bin/k3d
+      - name: Record runner resources
+        run: |
+          {
+            echo "### Runner"
+            echo '```'
+            nproc; free -h; df -h /
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: make up
+        run: |
+          # The CI identity commits the snapshot pushed to the in-cluster git server.
+          git config --global user.email ci@relay.invalid
+          git config --global user.name relay-ci
+          LOCAL_GIT=1 scripts/up.sh 2>&1 | tee up.log
+          { echo "### make up"; echo '```'; tail -8 up.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: smoke
+        run: |
+          scripts/smoke.sh 2>&1 | tee smoke.log
+          { echo "### smoke"; echo '```'; cat smoke.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Resource usage
+        if: always()
+        run: |
+          {
+            echo "### Resource usage"
+            echo '```'
+            kubectl --context k3d-relay top node || true
+            kubectl --context k3d-relay top pods -A --sort-by=memory || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Diagnostics
+        if: failure()
+        run: |
+          kubectl --context k3d-relay get applications.argoproj.io -A -o wide || true
+          kubectl --context k3d-relay get pods -A -o wide || true
+          kubectl --context k3d-relay get events -A --sort-by=.lastTimestamp | tail -100 || true

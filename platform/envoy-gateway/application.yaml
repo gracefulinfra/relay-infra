@@ -1,0 +1,31 @@
+# Envoy Gateway controller. The chart also installs the Gateway API CRDs (standard channel).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: envoy-gateway
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-90"
+spec:
+  project: platform
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: envoy-gateway-system
+  source:
+    repoURL: docker.io/envoyproxy
+    chart: gateway-helm
+    targetRevision: 1.9.1
+    helm:
+      releaseName: envoy-gateway
+      valuesObject:
+        deployment:
+          envoyGateway:
+            resources:
+              requests: {cpu: 20m, memory: 64Mi}
+              limits: {memory: 256Mi}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true

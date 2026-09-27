@@ -1,0 +1,21 @@
+# Local-only: the CA keypair behind relay-issuer. scripts/secrets.sh generates it once into $RELAY_HOME
+# (so you trust it once) and copies it into relay-secret-source; ESO syncs it to cert-manager.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: relay-local-ca
+  namespace: cert-manager
+  annotations:
+    argocd.argoproj.io/sync-wave: "-60"
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: relay-secrets
+  target:
+    name: relay-local-ca
+    template:
+      type: kubernetes.io/tls
+  dataFrom:
+    - extract:
+        key: relay-local-ca

@@ -1,0 +1,30 @@
+# Local k3d environment. Everything that differs by environment is patched in here; see ../README.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../platform/namespaces
+  - ../../platform/argo-cd
+  - ../../platform/external-secrets
+  - ../../platform/envoy-gateway
+  - ../../platform/cert-manager
+  - secret-source.yaml
+  - local-ca.yaml
+patches:
+  # Base domain: *.relay.localtest.me resolves to 127.0.0.1.
+  - target: {kind: Gateway, name: relay}
+    patch: |-
+      - {op: replace, path: /spec/listeners/0/hostname, value: "*.relay.localtest.me"}
+      - {op: replace, path: /spec/listeners/1/hostname, value: "*.relay.localtest.me"}
+  - target: {kind: HTTPRoute, name: argocd}
+    patch: |-
+      - {op: replace, path: /spec/hostnames/0, value: argocd.relay.localtest.me}
+  # Secrets: ESO's Kubernetes provider reads what scripts/secrets.sh generated in relay-secret-source.
+  - path: patches/secret-store.yaml
+  # TLS: a CA issuer over the local CA that scripts/secrets.sh keeps in $RELAY_HOME.
+  - target: {kind: ClusterIssuer, name: relay-issuer}
+    patch: |-
+      - {op: replace, path: /spec, value: {ca: {secretName: relay-local-ca}}}
+  # Load balancer: klipper servicelb on the single k3d node; k3d maps host ports 80/443 to it.
+  - target: {kind: EnvoyProxy, name: relay-proxy}
+    patch: |-
+      - {op: add, path: /spec/provider/kubernetes/envoyService/externalTrafficPolicy, value: Cluster}

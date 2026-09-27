@@ -1,27 +1,74 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:best-practices", ":semanticCommits"],
-  "labels": ["dependencies"],
-  "schedule": ["before 6am on monday"],
+  "extends": [
+    "config:best-practices",
+    ":semanticCommits"
+  ],
+  "labels": [
+    "dependencies"
+  ],
+  "schedule": [
+    "before 6am on monday"
+  ],
   "timezone": "America/New_York",
-  "postUpdateOptions": ["gomodTidy"],
+  "postUpdateOptions": [
+    "gomodTidy"
+  ],
   "packageRules": [
     {
       "description": "Group all minor, patch, digest, and pin updates into one weekly PR",
-      "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest",
+        "pin",
+        "pinDigest"
+      ],
       "groupName": "non-major dependencies",
       "groupSlug": "non-major"
+    },
+    {
+      "description": "The k3s image and the kubeconform schema target (KUBERNETES_VERSION) move together; review by hand",
+      "matchPackageNames": [
+        "docker.io/rancher/k3s"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "major"
+      ],
+      "enabled": false
     }
   ],
   "customManagers": [
     {
       "description": "Versions annotated with '# renovate: datasource=... depName=...' in Makefiles and workflows",
       "customType": "regex",
-      "managerFilePatterns": ["/(^|/)Makefile$/", "/^\\.github/workflows/.+\\.ya?ml$/"],
+      "managerFilePatterns": [
+        "/(^|/)Makefile$/",
+        "/^\\.github/workflows/.+\\.ya?ml$/",
+        "/^scripts/lib\\.sh$/"
+      ],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)( versioning=(?<versioning>\\S+))?\\s+[A-Za-z0-9_-]+\\s*(\\?=|:=|=|:)\\s*\"?v?(?<currentValue>[^\"\\s]+)\"?"
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)( versioning=(?<versioning>\\S+))?\\s+[A-Za-z0-9_-]+\\s*(\\?=|:=|=|:)\\s*\"?(\\$\\{[A-Z_]+:-)?v?(?<currentValue>[^\"\\s}@]+)\"?"
       ],
       "extractVersionTemplate": "^v?(?<version>.+)$"
+    },
+    {
+      "description": "Digest-pinned images outside Dockerfiles: the k3s node image (k3d config) and tool images (Makefile)",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^bootstrap/k3d\\.yaml$/",
+        "/(^|/)Makefile$/"
+      ],
+      "matchStrings": [
+        "(image:|_IMAGE \\?=) (?<depName>docker\\.io/[a-z0-9./_-]+):(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)"
+      ],
+      "datasourceTemplate": "docker"
     }
-  ]
+  ],
+  "argocd": {
+    "managerFilePatterns": [
+      "/^platform/.+/application\\.yaml$/"
+    ]
+  }
 }

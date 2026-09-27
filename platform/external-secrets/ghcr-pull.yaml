@@ -1,0 +1,27 @@
+# Private GHCR images (relay-contracts ADR-0004): every namespace labelled relay.dev/ghcr-pull=true gets a
+# `ghcr-pull` dockerconfigjson Secret. The source key `ghcr-pull` exists only when scripts/secrets.sh
+# was given a read:packages token; without it the ExternalSecret reports SecretSyncedError and no app
+# namespace carries the label yet, so nothing breaks.
+apiVersion: external-secrets.io/v1
+kind: ClusterExternalSecret
+metadata:
+  name: ghcr-pull
+  annotations:
+    argocd.argoproj.io/sync-wave: "-60"
+spec:
+  namespaceSelectors:
+    - matchLabels:
+        relay.dev/ghcr-pull: "true"
+  refreshTime: 1m
+  externalSecretSpec:
+    refreshInterval: 1h
+    secretStoreRef:
+      kind: ClusterSecretStore
+      name: relay-secrets
+    target:
+      name: ghcr-pull
+      template:
+        type: kubernetes.io/dockerconfigjson
+    dataFrom:
+      - extract:
+          key: ghcr-pull
