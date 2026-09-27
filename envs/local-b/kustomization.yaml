@@ -1,0 +1,111 @@
+# local-b: the second local "provider" for the P0-07 portability rehearsal (docs/portability.md).
+# Compared with envs/local it has its own cluster, DNS suffix, CA, storage class, and an S3 endpoint
+# outside the cluster (TLS, its own CA and credentials), and it bootstraps both PostgreSQL clusters
+# from the source environment's backups. Script settings: env.sh. See ../README.md for the knobs.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../platform/namespaces
+  - ../../platform/argo-cd
+  - ../../platform/external-secrets
+  - ../../platform/envoy-gateway
+  - ../../platform/cert-manager
+  - ../../platform/cloudnative-pg
+  - ../../platform/seaweedfs
+  - ../../platform/postgres
+  - ../../platform/keycloak
+  - ../../platform/argo-workflows
+  - storage-class.yaml
+  - s3-ca.yaml
+  - restore.yaml
+components:
+  # Secrets: ESO's Kubernetes provider reads what scripts/secrets.sh generated in relay-secret-source.
+  # TLS: the CA issuer over local-b's own CA ($RELAY_HOME/local-b/ca).
+  - ../components/local-secrets
+patches:
+  # Base domain: *.relay-b.localtest.me resolves to 127.0.0.1.
+  - target: {kind: Gateway, name: relay}
+    patch: |-
+      - {op: replace, path: /spec/listeners/0/hostname, value: "*.relay-b.localtest.me"}
+      - {op: replace, path: /spec/listeners/1/hostname, value: "*.relay-b.localtest.me"}
+  - target: {kind: HTTPRoute, name: argocd}
+    patch: |-
+      - {op: replace, path: /spec/hostnames/0, value: argocd.relay-b.localtest.me}
+  - target: {kind: HTTPRoute, name: keycloak}
+    patch: |-
+      - {op: replace, path: /spec/hostnames/0, value: auth.relay-b.localtest.me}
+  - target: {kind: Deployment, name: keycloak}
+    patch: |-
+      - {op: replace, path: /spec/template/spec/containers/0/env/0/value, value: "https://auth.relay-b.localtest.me"}
+  - target: {kind: ClusterIssuer, name: relay-issuer}
+    patch: |-
+      - {op: replace, path: /spec, value: {ca: {secretName: relay-local-ca}}}
+  # Load balancer: klipper servicelb on the single k3d node; k3d maps host ports 80/443 to it.
+  - target: {kind: EnvoyProxy, name: relay-proxy}
+    patch: |-
+      - {op: add, path: /spec/provider/kubernetes/envoyService/externalTrafficPolicy, value: Cluster}
+
+  # S3: the external endpoint (scripts/external-s3.sh) replaces the in-cluster SeaweedFS, as a managed
+  # S3 would. Same name, address and port as S3_CLUSTER_ENDPOINT in env.sh and hostAliases in k3d.yaml.
+  - target: {kind: Application, name: seaweedfs}
+    patch: |-
+      $patch: delete
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata:
+        name: seaweedfs
+  - target: {kind: ExternalSecret, name: seaweedfs-s3-config}
+    patch: |-
+      $patch: delete
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: seaweedfs-s3-config
+  - target: {kind: ObjectStore}
+    patch: |-
+      - {op: replace, path: /spec/configuration/endpointURL, value: "https://s3.relay-b.internal:8443"}
+      - {op: add, path: /spec/configuration/endpointCA, value: {name: s3-ca, key: ca.crt}}
+  # This environment's own WAL archive and backups, next to (never inside) the copied origin archive.
+  - target: {kind: ObjectStore, name: relay-backups}
+    patch: |-
+      - {op: replace, path: /spec/configuration/destinationPath, value: "s3://relay-backups/cnpg-local-b/"}
+  - target: {kind: Application, name: argo-workflows}
+    patch: |-
+      - {op: replace, path: /spec/source/helm/valuesObject/artifactRepository/s3/endpoint, value: "s3.relay-b.internal:8443"}
+      - {op: replace, path: /spec/source/helm/valuesObject/artifactRepository/s3/insecure, value: false}
+      - {op: add, path: /spec/source/helm/valuesObject/artifactRepository/s3/caSecret, value: {name: s3-ca, key: ca.crt}}
+      - {op: add, path: /spec/source/helm/valuesObject/controller/parallelism, value: 1}
+
+  # Storage class for PostgreSQL volumes.
+  - target: {kind: Cluster, group: postgresql.cnpg.io}
+    patch: |-
+      - {op: add, path: /spec/storage/storageClass, value: relay-b-retain}
+  # Restore: both clusters bootstrap from the origin archive (restore.yaml) instead of initdb.
+  # restore.sh adds the recovery target (the export's backup IDs) through relay-root, so each run's
+  # recovery point needs no commit. Without it, recovery replays all WAL that was copied.
+  - target: {kind: Cluster, name: relay}
+    patch: |-
+      - op: replace
+        path: /spec/bootstrap
+        value:
+          recovery: {source: origin, database: relay, owner: relay, secret: {name: relay-app}}
+      - op: add
+        path: /spec/externalClusters
+        value:
+          - name: origin
+            plugin:
+              name: barman-cloud.cloudnative-pg.io
+              parameters: {barmanObjectName: relay-origin, serverName: relay}
+  - target: {kind: Cluster, name: keycloak-db}
+    patch: |-
+      - op: replace
+        path: /spec/bootstrap
+        value:
+          recovery: {source: origin, database: keycloak, owner: keycloak, secret: {name: keycloak-db-app}}
+      - op: add
+        path: /spec/externalClusters
+        value:
+          - name: origin
+            plugin:
+              name: barman-cloud.cloudnative-pg.io
+              parameters: {barmanObjectName: relay-origin, serverName: keycloak-db}

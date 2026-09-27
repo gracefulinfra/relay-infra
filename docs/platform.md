@@ -41,7 +41,7 @@ before their Service has endpoints.
 
 | Service | Where | Notes |
 | --- | --- | --- |
-| SeaweedFS | `seaweedfs` | All-in-one pod (master, volume, filer, S3 on :8333), 10 Gi PVC. S3 auth is on. Buckets `relay-media`, `relay-feeds`, `relay-backups`, and `relay-logs` are all private. One identity per consumer (`cnpg`, `workflows`, `otel`), each limited to its bucket, plus `admin`. Not routed through the Gateway |
+| SeaweedFS | `seaweedfs` | All-in-one pod (master, volume, filer, S3 on :8333), 10 Gi PVC, 768 Mi limit with `GOMEMLIMIT`. S3 auth is on. Buckets `relay-media`, `relay-feeds`, `relay-backups`, and `relay-logs` are all private. One identity per consumer (`cnpg`, `workflows`, `otel`), each limited to its bucket, plus `admin`. Not routed through the Gateway |
 | PostgreSQL `relay` | `relay-db` | CNPG 1.30, PostgreSQL 17.11, 1 instance. WAL and base backups go to `s3://relay-backups/cnpg/relay/` through the barman-cloud plugin, with a nightly `ScheduledBackup` and 7-day retention. The app credentials are in `relay-app` |
 | PostgreSQL `keycloak-db` | `keycloak` | Keycloak's own cluster, archived to `s3://relay-backups/cnpg/keycloak-db/` |
 | Keycloak | `keycloak` | 26.7.4 at `https://auth.<domain>`. Realms are imported from `platform/keycloak/realms/*.json` on first start (existing realms are skipped). `relay-staff` makes TOTP a default required action; `relay-listeners` allows self-registration. Test users: `make keycloak-test-users` |

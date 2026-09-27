@@ -1,0 +1,43 @@
+# The external S3 endpoint's certificate is signed by its own CA (scripts/external-s3.sh), as a
+# provider's private endpoint might be. Every S3 client namespace gets it from the secret backend.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: s3-ca
+  namespace: relay-db
+  annotations:
+    argocd.argoproj.io/sync-wave: "-60"
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: relay-secrets}
+  target: {name: s3-ca}
+  dataFrom:
+    - extract: {key: s3-ca}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: s3-ca
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "-60"
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: relay-secrets}
+  target: {name: s3-ca}
+  dataFrom:
+    - extract: {key: s3-ca}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: s3-ca
+  namespace: relay-media
+  annotations:
+    argocd.argoproj.io/sync-wave: "-60"
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: relay-secrets}
+  target: {name: s3-ca}
+  dataFrom:
+    - extract: {key: s3-ca}

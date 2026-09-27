@@ -1,0 +1,13 @@
+# local-b's volume class. It differs from envs/local (k3s's default `local-path`, reclaim Delete) in
+# name and reclaim policy, so the overlay must name it explicitly, as a provider's block storage class
+# would be. Same provisioner: a laptop has only one (a limitation recorded in docs/portability.md).
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: relay-b-retain
+  annotations:
+    argocd.argoproj.io/sync-wave: "-100"
+provisioner: rancher.io/local-path
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: false

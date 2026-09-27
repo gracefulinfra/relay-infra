@@ -9,8 +9,8 @@ set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 require docker kubectl git envsubst
 
-REGISTRY_HOST_PORT=${REGISTRY_HOST_PORT:-5001}
-REGISTRY_NAME=${REGISTRY_NAME:-relay-registry.localhost}
+REGISTRY_HOST_PORT=${REGISTRY_HOST_PORT:?envs/$RELAY_ENV/env.sh sets no REGISTRY_HOST_PORT}
+REGISTRY_NAME=${REGISTRY_NAME:?envs/$RELAY_ENV/env.sh sets no REGISTRY_NAME}
 LOCAL_BRANCH=${LOCAL_BRANCH:-local}
 export LOCAL_GIT_URL=http://git-server.relay-git.svc.cluster.local/relay-infra.git
 

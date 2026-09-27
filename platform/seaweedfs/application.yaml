@@ -39,9 +39,13 @@ spec:
           data:
             type: persistentVolumeClaim
             size: 10Gi
+          # Sustained multi-GB uploads (the P0-07 1 GiB dataset) OOM-killed it at 512Mi: Go's GC does not
+          # see the cgroup limit, so GOMEMLIMIT keeps the heap well under it.
+          extraEnvironmentVars:
+            GOMEMLIMIT: 560MiB
           resources:
             requests: {cpu: 50m, memory: 128Mi}
-            limits: {memory: 512Mi}
+            limits: {memory: 768Mi}
           # Upstream image runs as root; non-root + read-only root FS is a P1-19 follow-up.
           containerSecurityContext:
             allowPrivilegeEscalation: false

@@ -6,11 +6,14 @@
 #   scripts/s3-conformance.sh cluster [go test flags...]
 #       Runs against the SeaweedFS in the k3d cluster (make up) through a port-forward, as the s3-admin
 #       identity, in a scratch bucket that the suite creates and deletes.
+#   RELAY_ENV=local-b scripts/s3-conformance.sh external [go test flags...]
+#       Runs against the env's external S3 endpoint (S3_MODE=external, scripts/external-s3.sh) over TLS with
+#       its CA, as its admin identity, in a scratch bucket that the suite creates and deletes.
 # Extra flags go to `go test`, for example -target=seaweedfs-4.47 to write a report, or -run=TestS3Conformance/03.
 set -euo pipefail
 # shellcheck source=scripts/lib.sh
 source "$(dirname "$0")/lib.sh"
-require go docker
+require go docker jq
 
 MODE=${1:-container}
 shift || true
@@ -79,7 +82,17 @@ cluster)
   BUCKET=${S3_CONFORMANCE_BUCKET:-relay-conformance-$(date +%s)}
   run_suite "http://127.0.0.1:$PORT" -create-bucket "$@"
   ;;
+external)
+  [ "${S3_MODE:-}" = external ] || die "envs/$RELAY_ENV is not S3_MODE=external"
+  creds="$S3_STATE_DIR/identities.json"
+  [ -s "$creds" ] || die "no credentials in $creds: run RELAY_ENV=$RELAY_ENV scripts/external-s3.sh up"
+  AWS_ACCESS_KEY_ID=$(jq -r .admin.access_key_id "$creds")
+  AWS_SECRET_ACCESS_KEY=$(jq -r .admin.secret_access_key "$creds")
+  export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+  BUCKET=${S3_CONFORMANCE_BUCKET:-relay-conformance-$(date +%s)}
+  run_suite "$S3_ENDPOINT" -create-bucket -ca-file="$S3_CA_FILE" "$@"
+  ;;
 *)
-  die "usage: $0 container|cluster [go test flags...]"
+  die "usage: $0 container|cluster|external [go test flags...]"
   ;;
 esac

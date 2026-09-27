@@ -32,9 +32,9 @@ Internal services (PostgreSQL, SeaweedFS S3, the Argo Workflows UI) are not rout
 
 | Tool | Notes |
 | --- | --- |
-| Docker | Docker Desktop needs at least 8 GB of memory (see [docs/laptop-profile.md](docs/laptop-profile.md)). Host ports 80, 443, and 5001 must be free |
+| Docker | Docker Desktop needs at least 8 GB of memory (see [docs/laptop-profile.md](docs/laptop-profile.md)). Host ports 80, 443, and 5001 must be free (`make portability` also uses 5002 and 18443) |
 | k3d 5.9.x, kubectl, Helm 4.x | Pinned versions: [relay-contracts/docs/version-matrix.md](https://github.com/gracefulinfra/relay-contracts/blob/main/docs/version-matrix.md) |
-| Go 1.27 | Installs the pinned `yq` and `kubeconform` into `.local/bin` on first use, and runs the conformance suites |
+| Go 1.27 | Installs the pinned `yq`, `kubeconform`, `rclone` and `age` into `.local/bin` on first use, and runs the conformance suites |
 | golangci-lint 2.14.0 | `make lint` only |
 | `make`, `git`, `curl`, `jq`, `openssl`, `envsubst` (gettext) | `envsubst` ships with `brew install gettext` on macOS |
 | `pipx` | `make lint` only (pinned yamllint) |
@@ -75,9 +75,11 @@ bootstrap/     k3d config, the relay-root app-of-apps template, the LOCAL_GIT gi
 platform/      one directory per platform service: an Argo CD Application (Helm chart + valuesObject)
                plus the provider-neutral manifests that configure it
 apps/          Relay app charts (from P1-01)
-envs/          Kustomize overlays: local (k3d), provider-a and provider-b (compile-only stubs)
+envs/          Kustomize overlays plus env.sh script settings: local (k3d), local-b (the portability
+               rehearsal target), provider-a and provider-b (compile-only stubs)
 conformance/   test suites a storage or cluster target must pass before Relay uses it (s3/: P0-06)
-scripts/       up, down, secrets, local-git, wait-apps, smoke, validate, s3-conformance
+scripts/       up, down, secrets, local-git, wait-apps, smoke, validate, s3-conformance, external-s3;
+               portability/ (seed, export, restore, verify, report, run)
 ```
 
 How it fits together:
@@ -99,7 +101,7 @@ More detail: [docs/platform.md](docs/platform.md).
 
 | Target | What it does |
 | --- | --- |
-| `make up` / `make dev` | Create (or start) the cluster and wait until every Application is Synced/Healthy |
+| `make up` / `make dev` | Create (or start) the cluster and wait until every Application is Synced/Healthy. `RELAY_ENV=<env>` picks the overlay and its `envs/<env>/env.sh` (default `local`) |
 | `make smoke` | `scripts/smoke.sh`: Argo CD, secrets, TLS, Gateway, S3 privacy, CNPG health and an on-demand backup to S3, Keycloak TOTP login, and an Argo Workflow artifact |
 | `make keycloak-test-users` | Print the Keycloak test users and the staff TOTP enrolment URI |
 | `make sync` | `LOCAL_GIT=1` only: push a working-tree snapshot and refresh Argo CD |
@@ -109,6 +111,9 @@ More detail: [docs/platform.md](docs/platform.md).
 | `make vuln` | govulncheck on the Go module |
 | `make conformance-s3` | The [S3 conformance suite](conformance/s3/README.md) against SeaweedFS in Docker. `ARGS="-target=<name>"` writes a report |
 | `make conformance-s3-cluster` | The same suite against the k3d cluster's SeaweedFS |
+| `make conformance-s3-external` | The same suite against an env's external S3 over TLS (`RELAY_ENV=local-b`) |
+| `make portability` | The [portability rehearsal](docs/portability.md): seed `local`, export to `local-b`'s storage, restore `local-b` through GitOps, verify, and write a run report to `docs/portability/runs/` |
+| `make portability-down` | Delete the `local-b` cluster and its external S3 |
 | `make build`, `make image` | Skipped: no published artifacts |
 
 ## CI
@@ -120,3 +125,7 @@ More detail: [docs/platform.md](docs/platform.md).
   summary and the `s3-conformance` artifact.
 - `e2e`: `LOCAL_GIT=1 scripts/up.sh` and `scripts/smoke.sh` on a fresh `ubuntu-24.04` runner. This is
   the clean-machine run; the job summary records timings and per-pod memory.
+
+`.github/workflows/portability.yml` runs `LOCAL_GIT=1 make portability` on demand (`workflow_dispatch`,
+about 30 minutes). The report is the job summary; timings, logs, manifest and inventories are the
+artifact (never the age identity or the encrypted bundle).

@@ -1,0 +1,39 @@
+# k3d cluster for envs/local-b, the second local "provider" of the P0-07 portability rehearsal.
+# It differs from bootstrap/k3d.yaml on purpose: its own cluster name, registry and Docker network, and
+# the external S3 container (scripts/external-s3.sh) reachable by a DNS name that only this cluster
+# resolves. It uses the same host ports 80/443, so stop the `relay` cluster first (the laptop profile
+# fits one cluster at a time anyway).
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: relay-b
+servers: 1
+agents: 0
+image: docker.io/rancher/k3s:v1.36.4-k3s1@sha256:edad48e12bf81c3a09ac1c05c0c0ffaaa22145980b989d6fae84543a76b83657
+# Created by scripts/external-s3.sh with the subnet in envs/local-b/env.sh.
+network: relay-b
+ports:
+  - port: 80:80
+    nodeFilters: [loadbalancer]
+  - port: 443:443
+    nodeFilters: [loadbalancer]
+registries:
+  create:
+    name: relay-b-registry.localhost
+    host: 127.0.0.1
+    hostPort: "5002"
+# The provider's S3 endpoint name. k3d writes it into CoreDNS NodeHosts, so pods resolve it too.
+hostAliases:
+  - ip: 172.29.0.10
+    hostnames: [s3.relay-b.internal]
+options:
+  k3d:
+    wait: true
+    timeout: 180s
+  k3s:
+    extraArgs:
+      - arg: --disable=traefik
+        nodeFilters: [server:*]
+  kubeconfig:
+    updateDefaultKubeconfig: true
+    switchCurrentContext: false

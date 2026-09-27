@@ -9,9 +9,9 @@ set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 require kubectl curl openssl jq od
 
-DOMAIN=${DOMAIN:-relay.localtest.me}
+DOMAIN=${DOMAIN:?envs/$RELAY_ENV/env.sh sets no DOMAIN}
 BASE="https://auth.$DOMAIN"
-CA_CERT=${CA_CERT:-$RELAY_HOME/ca/relay-local-ca.crt}
+CA_CERT=${CA_CERT:-$CA_DIR/relay-local-ca.crt}
 
 secret_field() {
   kc -n relay-secret-source get secret keycloak-test-users -o jsonpath="{.data.$1}" | openssl base64 -d -A

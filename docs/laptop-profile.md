@@ -24,6 +24,12 @@ Measured with `kubectl top` and `docker stats` once `make smoke` passed. "Node a
 | P0-05 PR2: + CNPG ×2, SeaweedFS, Keycloak, Argo Workflows | ≈2.3 GiB | ≈4.4 GiB | keycloak ≈630 Mi, argocd-application-controller ≈530 Mi, each PostgreSQL instance ≈110–130 Mi, seaweedfs ≈100 Mi |
 | P0-05 PR3: + Prometheus, Grafana, OTel Collector, Tempo | _pending_ | _pending_ | |
 
+P0-07: SeaweedFS was OOM-killed at its 512 Mi limit while the portability seed wrote 1 GiB (64 × 16 MiB
+objects, four at a time). Go's garbage collector does not see the cgroup limit, so the limit is now
+768 Mi with `GOMEMLIMIT=560MiB`. The `local-b` cluster runs no SeaweedFS (its S3 is the external
+container), and the laptop fits one platform at a time, so the portability rehearsal stops `relay`
+before it starts `relay-b`.
+
 ## Start-up timings
 
 The target is ≤ 10 minutes for `make up` on this machine. It's a benchmark, not a gate.

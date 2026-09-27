@@ -55,6 +55,29 @@ crd_schemas() {
   done
 }
 
+# check_env_settings <env> <rendered overlay>: values that env.sh repeats from the overlay (and from the
+# env's k3d config) must agree, since scripts use one and pods the other.
+check_env_settings() {
+  local env=$1 built=$2 domain endpoint k3d want got
+  domain=$(env_var "$env" DOMAIN)
+  endpoint=$(env_var "$env" S3_CLUSTER_ENDPOINT)
+  got=$(yq -N 'select(.kind == "Gateway" and .metadata.name == "relay") | .spec.listeners[].hostname' "$built" | sort -u)
+  [ "$got" = "*.$domain" ] || die "envs/$env: env.sh DOMAIN=$domain, but the Gateway listens on '$got'"
+  got=$(yq -N 'select(.kind == "ObjectStore") | .spec.configuration.endpointURL' "$built" | sort -u)
+  [ "$got" = "$endpoint" ] || die "envs/$env: env.sh S3_CLUSTER_ENDPOINT=$endpoint, but ObjectStores use '$got'"
+  k3d=$(env_var "$env" K3D_CONFIG)
+  if [ "$(env_var "$env" S3_MODE)" = external ]; then
+    want="$(env_var "$env" EXTERNAL_S3_IP) $(sed -E 's|^https?://([^:/]+).*|\1|' <<<"$endpoint")"
+    got=$(yq '.hostAliases[] | .ip + " " + (.hostnames | join(" "))' "$k3d")
+    [ "$got" = "$want" ] || die "envs/$env: $k3d hostAliases are '$got', env.sh says '$want'"
+    [ "$(yq .network "$k3d")" = "$(env_var "$env" EXTERNAL_S3_NETWORK)" ] ||
+      die "envs/$env: $k3d network differs from env.sh EXTERNAL_S3_NETWORK"
+  fi
+  [ "$(yq .metadata.name "$k3d")" = "$(env_var "$env" CLUSTER_NAME)" ] || die "envs/$env: $k3d name differs from env.sh CLUSTER_NAME"
+  [ "$(yq .registries.create.name "$k3d")" = "$(env_var "$env" REGISTRY_NAME)" ] || die "envs/$env: $k3d registry differs from env.sh REGISTRY_NAME"
+  log "envs/$env: env.sh agrees with the overlay and $k3d"
+}
+
 render_env() {
   local env=$1 out=$2
   local built="$out/$env/kustomize.yaml"
@@ -66,6 +89,11 @@ render_env() {
   leaked=$(yq 'select(.kind == "Secret" and (.data != null or .stringData != null)) | .metadata.namespace + "/" + .metadata.name' "$built")
   if [ -n "${leaked//$'\n'/}" ]; then
     die "envs/$env renders Secrets with data (use an ExternalSecret): $leaked"
+  fi
+
+  # The scripts' view of the env (envs/<env>/env.sh) must match what the overlay deploys.
+  if [ -f "envs/$env/env.sh" ]; then
+    check_env_settings "$env" "$built"
   fi
 
   # Every Application with a Helm chart source: render it the way Argo CD would.

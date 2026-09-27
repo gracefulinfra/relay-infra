@@ -5,6 +5,8 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"errors"
 	"flag"
@@ -42,8 +44,39 @@ var (
 	flagAccessLogNote     = flag.String("access-log-note", "", "how download logs are obtained on this target; recorded in the report for case 11")
 	flagChecksums         = flag.String("sdk-checksums", "when_supported", "SDK request checksum mode: when_supported (the SDK default) or when_required")
 	flagStrict            = flag.Bool("strict", false, "fail the run on soft failures too")
+	flagHTTP1             = flag.Bool("http1", false, "use HTTP/1.1 only; by default an https endpoint may negotiate HTTP/2, as the AWS SDK does")
+	flagCAFile            = flag.String("ca-file", "", "PEM file with extra CA certificates to trust for an https endpoint with a private CA")
 	flagAccessLogWait     = flag.Duration("access-log-wait", 30*time.Second, "how long case 11 waits for a server access log object to appear")
 )
+
+// baseTransport is http.DefaultTransport, trusting the certificates in caFile as well when it is set,
+// and limited to HTTP/1.1 when http1 is set.
+func baseTransport(caFile string, http1 bool) (http.RoundTripper, error) {
+	if caFile == "" && !http1 {
+		return http.DefaultTransport, nil
+	}
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	if caFile != "" {
+		pem, err := os.ReadFile(caFile) // #nosec G304 -- the operator names the CA file on the command line
+		if err != nil {
+			return nil, fmt.Errorf("-ca-file: %w", err)
+		}
+		pool, err := x509.SystemCertPool()
+		if err != nil {
+			pool = x509.NewCertPool()
+		}
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("-ca-file %s: no PEM certificates", caFile)
+		}
+		t.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	}
+	if http1 {
+		t.ForceAttemptHTTP2 = false
+		t.Protocols = new(http.Protocols)
+		t.Protocols.SetHTTP1(true)
+	}
+	return t, nil
+}
 
 // Level says whether Relay refuses a target that fails the case (hard) or works around it (soft).
 type Level string
@@ -186,8 +219,12 @@ func newSuite(ctx context.Context) (*suite, *recorder, error) {
 	// Credentials come from the standard AWS chain (environment, shared config/profile), never from flags,
 	// so they do not end up in shell history or CI logs.
 	rd := &redactor{}
+	base, err := baseTransport(*flagCAFile, *flagHTTP1)
+	if err != nil {
+		return nil, nil, err
+	}
 	httpClient := &http.Client{
-		Transport: &recordingTransport{base: http.DefaultTransport, redactor: rd},
+		Transport: &recordingTransport{base: base, redactor: rd},
 		Timeout:   2 * time.Minute,
 	}
 	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(*flagRegion), config.WithHTTPClient(httpClient))

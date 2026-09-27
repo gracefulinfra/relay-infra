@@ -74,6 +74,7 @@ func (s *suite) render(setupErr error) string {
 	w("| Target | `%s` |\n", *flagTarget)
 	w("| Run at | %s |\n", s.started.UTC().Format(time.RFC3339))
 	w("| Endpoint | `%s://%s` (%s addressing) |\n", s.endpoint.Scheme, s.redactor.text(s.endpoint.Host), addressing())
+	w("| HTTP | %s |\n", httpMode(s.endpoint.Scheme))
 	w("| Bucket | `%s` |\n", s.bucket)
 	w("| Region | `%s` |\n", *flagRegion)
 	w("| SDK request checksums | `%s` |\n", s.checksumMode)
@@ -171,4 +172,16 @@ func toolVersions() string {
 		}
 	}
 	return strings.Join(parts, ", ")
+}
+
+// httpMode describes the protocol the suite's clients used.
+func httpMode(scheme string) string {
+	switch {
+	case *flagHTTP1:
+		return "HTTP/1.1 only (`-http1`)"
+	case scheme == "https":
+		return "HTTP/2 when the server offers it (ALPN), as the AWS SDK's default transport does"
+	default:
+		return "HTTP/1.1 (plain HTTP)"
+	}
 }

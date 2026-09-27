@@ -138,6 +138,8 @@ only when its report says **ACCEPTED**.
 | `-sdk-checksums` | `when_supported` | SDK request checksum mode: `when_supported` (SDK default) or `when_required` |
 | `-strict` | `false` | Fail the run on soft failures too |
 | `-keep` | `false` | Keep the test objects |
+| `-ca-file` | (none) | Extra CA certificates (PEM) to trust, for an https endpoint with a private CA |
+| `-http1` | `false` | HTTP/1.1 only. By default an https endpoint may negotiate HTTP/2, as the AWS SDK's default transport does |
 
 ## Known target behaviour
 
@@ -146,6 +148,12 @@ only when its report says **ACCEPTED**.
   gateway can send per-request audit records to Fluentd (`-s3.auditLogConfig`, not exercised by the
   suite). Lifecycle rules are accepted and read back; enforcement was not observed. See the committed
   report for the rest.
+- **SeaweedFS 4.47 over HTTPS with HTTP/2** fails cases 07a and 07b (P0-07). Its `304 Not Modified`
+  responses carry a `Content-Length` for a body they do not send. HTTP/1.1 clients ignore it, but Go's
+  HTTP/2 client (and so the AWS SDK for Go on its default transport) fails the request with
+  `unexpected EOF`. P0-06's runs were plain HTTP, so they could not see it. Over HTTPS with `-http1`,
+  every hard case passes. Relay's S3 clients must use HTTP/1.1 against SeaweedFS over TLS, or TLS must
+  terminate in front of it. Reports: `reports/local-b-seaweedfs-4.47-https-*.md`.
 - Unknown bucket sub-resources on SeaweedFS can fall through to other handlers instead of returning
   `501 NotImplemented`. Do not rely on a bucket-level S3 API unless a conformance case covers it.
 
