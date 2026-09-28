@@ -59,17 +59,29 @@ use_run() { # use_run [new]: sets RUN_ID and RUN_DIR
 # step <phase> <name> <command...>: runs a step, and records its wall-clock time and outcome in
 # $RUN_DIR/steps.tsv. A step that transfers data records its bytes with `record_bytes`.
 step() {
-  local phase=$1 name=$2 t rc=0
+  local phase=$1 name=$2 t rc bytes
   shift 2
   log "[$phase] $name"
   t=$(now_s)
-  STEP_BYTES=""
-  "$@" || rc=$?
-  printf '%s\t%s\t%s\t%s\t%s\n' "$phase" "$name" "$(($(now_s) - t))" "${STEP_BYTES:-}" \
+  STEP_BYTES_FILE=$(mktemp)
+  # Run the step in a subshell with errexit on. Calling it as `"$@" || rc=$?` would switch errexit
+  # off inside the whole function (bash ignores -e in a || list), so a failed command mid-step, such as
+  # a cluster that was never created, was silently ignored (the first CI rehearsal, 2026-09-28).
+  set +e
+  (
+    set -e
+    "$@"
+  )
+  rc=$?
+  set -e
+  bytes=$(cat "$STEP_BYTES_FILE")
+  rm -f "$STEP_BYTES_FILE"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$phase" "$name" "$(($(now_s) - t))" "$bytes" \
     "$([ "$rc" = 0 ] && echo ok || echo "failed ($rc)")" >>"$RUN_DIR/steps.tsv"
   [ "$rc" = 0 ] || die "[$phase] $name failed"
 }
-record_bytes() { STEP_BYTES=$((${STEP_BYTES:-0} + $1)); }
+# record_bytes <n>: adds to the current step's byte count (a file, because steps run in a subshell).
+record_bytes() { echo $(($(cat "$STEP_BYTES_FILE" 2>/dev/null || echo 0) + $1)) >"$STEP_BYTES_FILE"; }
 
 # manual_step <phase> <what the operator had to do by hand>. The target is zero; each one is reported.
 manual_step() { printf '%s\t%s\n' "$1" "$2" >>"$RUN_DIR/manual.tsv"; }

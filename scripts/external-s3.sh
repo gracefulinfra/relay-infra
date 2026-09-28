@@ -19,7 +19,7 @@ source "$(dirname "$0")/lib.sh"
 require docker openssl jq curl
 
 [ "${S3_MODE:-}" = external ] || die "envs/$RELAY_ENV uses S3_MODE=${S3_MODE:-unset}; external-s3.sh is for S3_MODE=external"
-: "${EXTERNAL_S3_NAME:?}" "${EXTERNAL_S3_NETWORK:?}" "${EXTERNAL_S3_SUBNET:?}" "${EXTERNAL_S3_IP_RANGE:?}"
+: "${EXTERNAL_S3_NAME:?}" "${EXTERNAL_S3_NETWORK:?}" "${EXTERNAL_S3_SUBNET:?}" "${EXTERNAL_S3_GATEWAY:?}" "${EXTERNAL_S3_IP_RANGE:?}"
 : "${EXTERNAL_S3_IP:?}" "${EXTERNAL_S3_HOST_PORT:?}" "${S3_CLUSTER_ENDPOINT:?}" "${S3_STATE_DIR:?}" "${S3_ENDPOINT:?}"
 BUCKETS=(relay-media relay-feeds relay-backups relay-logs)
 volume="$EXTERNAL_S3_NAME-data"
@@ -74,7 +74,8 @@ up() {
   : "${SEAWEEDFS_IMAGE:?set SEAWEEDFS_IMAGE (the Makefile pins it)}"
   ensure_pki
   if ! docker network inspect "$EXTERNAL_S3_NETWORK" >/dev/null 2>&1; then
-    docker network create --subnet "$EXTERNAL_S3_SUBNET" --ip-range "$EXTERNAL_S3_IP_RANGE" "$EXTERNAL_S3_NETWORK" >/dev/null
+    docker network create --subnet "$EXTERNAL_S3_SUBNET" --gateway "$EXTERNAL_S3_GATEWAY" \
+      --ip-range "$EXTERNAL_S3_IP_RANGE" "$EXTERNAL_S3_NETWORK" >/dev/null
     log "created Docker network $EXTERNAL_S3_NETWORK ($EXTERNAL_S3_SUBNET)"
   fi
   # Always (re)create the container: its credentials and certificate are fixed at creation, and may
