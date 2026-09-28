@@ -1,0 +1,74 @@
+# Restore wiring for the portability rehearsal (scripts/portability/restore.sh).
+#
+# `relay-origin` is the read-only view of the source environment's WAL archive and base backups, which
+# scripts/portability/export.sh copied to s3://relay-backups/cnpg/ on this environment's S3. Each
+# Cluster bootstraps from it (patched in kustomization.yaml) and then archives to its own path
+# (s3://relay-backups/cnpg-local-b/), so the restored cluster never writes into the origin archive.
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: relay-origin
+  namespace: relay-db
+  annotations:
+    argocd.argoproj.io/sync-wave: "-40"
+spec:
+  configuration:
+    destinationPath: s3://relay-backups/cnpg/
+    endpointURL: https://s3.example.invalid
+    s3Credentials:
+      accessKeyId: {name: s3-backup, key: access_key_id}
+      secretAccessKey: {name: s3-backup, key: secret_access_key}
+    wal:
+      compression: gzip
+---
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: relay-origin
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "-40"
+spec:
+  configuration:
+    destinationPath: s3://relay-backups/cnpg/
+    endpointURL: https://s3.example.invalid
+    s3Credentials:
+      accessKeyId: {name: s3-backup, key: access_key_id}
+      secretAccessKey: {name: s3-backup, key: secret_access_key}
+    wal:
+      compression: gzip
+---
+# The database owners' credentials travel with the data (the age-encrypted bundle that export.sh
+# writes and scripts/secrets.sh imports), so clients configured for the source keep working. With
+# bootstrap.recovery.secret set, CNPG uses these instead of generating <cluster>-app.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: relay-app
+  namespace: relay-db
+  annotations:
+    argocd.argoproj.io/sync-wave: "-60"
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: relay-secrets}
+  target:
+    name: relay-app
+    template: {type: kubernetes.io/basic-auth}
+  dataFrom:
+    - extract: {key: relay-db-app}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: keycloak-db-app
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/sync-wave: "-60"
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: relay-secrets}
+  target:
+    name: keycloak-db-app
+    template: {type: kubernetes.io/basic-auth}
+  dataFrom:
+    - extract: {key: keycloak-db-app}

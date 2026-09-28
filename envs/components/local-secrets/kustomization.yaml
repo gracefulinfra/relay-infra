@@ -1,0 +1,9 @@
+# Shared by the laptop environments (local, local-b): the ESO Kubernetes provider reads what
+# scripts/secrets.sh generated in relay-secret-source, and cert-manager gets the env's local CA from it.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - secret-source.yaml
+  - local-ca.yaml
+patches:
+  - path: secret-store.yaml

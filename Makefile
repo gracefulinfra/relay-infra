@@ -9,19 +9,23 @@ GOLANGCI_LINT_VERSION ?= 2.14.0
 # The S3 conformance target in Docker. Keep the tag equal to the chart in platform/seaweedfs (scripts/s3-conformance.sh checks).
 SEAWEEDFS_IMAGE ?= docker.io/chrislusf/seaweedfs:4.47@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882
 
-.PHONY: help up down stop dev sync smoke wait secrets argocd-password keycloak-test-users test lint vuln conformance-s3 conformance-s3-cluster build image
+.PHONY: help up down stop dev sync smoke wait secrets argocd-password keycloak-test-users test lint vuln conformance-s3 conformance-s3-cluster conformance-s3-external portability portability-report portability-down build image
+
+# Environment for up/down/stop/smoke/...: an overlay in envs/ with an env.sh (local, local-b).
+RELAY_ENV ?= local
+export RELAY_ENV
 
 help: ## List targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-24s %s\n", $$1, $$2}'
 
-up: ## Create the k3d cluster and reconcile envs/local through Argo CD (LOCAL_GIT=1 to use the working tree)
+up: ## Create the k3d cluster and reconcile envs/$RELAY_ENV through Argo CD (LOCAL_GIT=1 to use the working tree)
 	scripts/up.sh
 
 down: ## Delete the k3d cluster and registry (keeps the local CA in ~/.relay-local)
 	scripts/down.sh
 
 stop: ## Stop the cluster but keep it (the next `make up` is a cached start)
-	k3d cluster stop relay
+	k3d cluster stop "$$(bash -c 'source scripts/lib.sh && echo $$CLUSTER_NAME')"
 
 dev: up ## Alias for `make up`
 
@@ -38,7 +42,7 @@ secrets: ## (Re)create missing local secrets in relay-secret-source
 	scripts/secrets.sh
 
 argocd-password: ## Print the initial Argo CD admin password
-	@kubectl --context k3d-relay -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo
+	@kubectl --context "k3d-$$(bash -c 'source scripts/lib.sh && echo $$CLUSTER_NAME')" -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo
 
 keycloak-test-users: ## Print the Keycloak test users and the staff TOTP enrolment URI
 	@scripts/keycloak.sh test-users
@@ -49,7 +53,7 @@ test: ## Render and kubeconform every env overlay and Helm Application; Go unit 
 
 lint: ## yamllint, shellcheck, helm lint --strict on app charts, golangci-lint
 	pipx run --spec yamllint==$(YAMLLINT_VERSION) yamllint --strict .
-	docker run --rm -v "$(CURDIR):/mnt:ro" -w /mnt $(SHELLCHECK_IMAGE) -x scripts/*.sh bootstrap/local-git/entrypoint.sh
+	docker run --rm -v "$(CURDIR):/mnt:ro" -w /mnt $(SHELLCHECK_IMAGE) -x scripts/*.sh scripts/portability/*.sh envs/*/env.sh bootstrap/local-git/entrypoint.sh
 	scripts/validate.sh lint
 	@golangci-lint version 2>/dev/null | grep -q "version $(GOLANGCI_LINT_VERSION)" || { \
 	  echo "golangci-lint $(GOLANGCI_LINT_VERSION) is required (found: $$(golangci-lint version 2>/dev/null || echo none))."; \
@@ -64,6 +68,19 @@ conformance-s3: ## S3 conformance suite against SeaweedFS in Docker (ARGS="-targ
 
 conformance-s3-cluster: ## S3 conformance suite against the k3d cluster's SeaweedFS (needs make up)
 	SEAWEEDFS_IMAGE=$(SEAWEEDFS_IMAGE) scripts/s3-conformance.sh cluster $(ARGS)
+
+conformance-s3-external: ## S3 conformance suite against an env's external S3 (RELAY_ENV=local-b; needs scripts/external-s3.sh up)
+	SEAWEEDFS_IMAGE=$(SEAWEEDFS_IMAGE) scripts/s3-conformance.sh external $(ARGS)
+
+portability: ## Portability rehearsal FROM=local → TO=local-b: seed, export, restore, verify, report (docs/portability.md)
+	SEAWEEDFS_IMAGE=$(SEAWEEDFS_IMAGE) scripts/portability/run.sh
+
+portability-report: ## Re-render the latest portability run's report into docs/portability/runs/
+	scripts/portability/report.sh
+
+portability-down: ## Delete the local-b cluster and its external S3 (keeps its CA and credentials in ~/.relay-local/local-b)
+	RELAY_ENV=local-b scripts/down.sh
+	RELAY_ENV=local-b scripts/external-s3.sh down
 
 build: ## Nothing to build
 	@echo "SKIPPED: relay-infra has no build artifacts."

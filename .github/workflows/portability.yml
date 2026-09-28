@@ -1,0 +1,86 @@
+name: portability
+
+# The P0-07 portability rehearsal on a clean runner: `make portability` creates envs/local, seeds it,
+# exports it to envs/local-b's external S3, restores local-b through GitOps and verifies it
+# (docs/portability.md). It takes about half an hour, so it runs on demand only (owner decision,
+# 2026-09-27), not on every PR. The report is the job summary; the evidence is an artifact.
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  rehearsal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      contents: read
+    env:
+      # renovate: datasource=github-releases depName=k3d-io/k3d
+      K3D_VERSION: v5.9.0
+      # Update with K3D_VERSION: sha256 of k3d-linux-amd64 from the release checksums.txt.
+      K3D_SHA256: 06d8f25bc3a971c4eb29e0ff08429b180402db0f4dec838c9eac427e296800a0
+      RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          # renovate: datasource=github-releases depName=helm/helm
+          version: v4.3.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # renovate: datasource=golang-version depName=go
+          go-version: 1.27.1
+          cache: false
+      - name: Install k3d
+        run: |
+          curl -fsSLo /tmp/k3d "https://github.com/k3d-io/k3d/releases/download/${K3D_VERSION}/k3d-linux-amd64"
+          echo "${K3D_SHA256}  /tmp/k3d" | sha256sum -c -
+          sudo install -m 0755 /tmp/k3d /usr/local/bin/k3d
+      - name: make portability
+        shell: bash # -eo pipefail, so a failing run fails the step despite tee
+        run: |
+          # The CI identity commits the snapshots pushed to the in-cluster git servers.
+          git config --global user.email ci@relay.invalid
+          git config --global user.name relay-ci
+          LOCAL_GIT=1 make portability 2>&1 | tee portability.log
+      - name: Report
+        if: always()
+        run: |
+          report="docs/portability/runs/$RUN_ID.md"
+          if [ -f "$report" ]; then cat "$report"; else echo "No report was written."; fi >> "$GITHUB_STEP_SUMMARY"
+      - name: Collect evidence
+        if: always()
+        run: |
+          # Timings, facts, logs, manifest and inventories. Never the age identity or the encrypted bundle.
+          run="$HOME/.relay-local/portability/runs/$RUN_ID"
+          mkdir -p evidence
+          if [ -d "$run" ]; then
+            rsync -a --exclude 'secrets.age' --exclude '*.key' "$run/" evidence/
+          fi
+          cp portability.log evidence/ 2>/dev/null || true
+          cp docs/portability/runs/*.md conformance/s3/reports/*local-b*.md evidence/ 2>/dev/null || true
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: portability-${{ env.RUN_ID }}
+          path: evidence/
+          if-no-files-found: warn
+      - name: Diagnostics
+        if: failure()
+        run: |
+          for ctx in k3d-relay k3d-relay-b; do
+            echo "::group::$ctx"
+            kubectl --context "$ctx" get applications.argoproj.io -A -o wide || true
+            kubectl --context "$ctx" get clusters.postgresql.cnpg.io,backups.postgresql.cnpg.io -A || true
+            kubectl --context "$ctx" get pods -A -o wide || true
+            kubectl --context "$ctx" get events -A --sort-by=.lastTimestamp | tail -60 || true
+            echo "::endgroup::"
+          done
+          docker logs relay-b-s3 2>&1 | tail -50 || true

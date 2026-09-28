@@ -5,8 +5,14 @@
 # Idempotent: an existing Secret keeps its value, so re-running never rotates credentials by accident.
 # Values that must outlive the cluster (the local CA you trust once) are kept in $RELAY_HOME.
 #
+# S3 depends on S3_MODE (envs/<env>/env.sh): `in-cluster` generates the identities and the SeaweedFS IAM
+# config; `external` copies the identities and CA of the external endpoint (scripts/external-s3.sh).
+#
 # Optional input:
 #   GHCR_TOKEN   a GitHub token with read:packages; creates the ghcr-pull source secret (ADR-0004).
+#   RELAY_SECRETS_BUNDLE  an age-encrypted bundle written by scripts/portability/export.sh. Its Secrets
+#                are imported first and replace existing ones, so carried values win over generated ones.
+#   RELAY_AGE_KEY  the age identity that decrypts the bundle (default $RELAY_HOME/portability/age.key).
 set -euo pipefail
 # shellcheck source=scripts/lib.sh
 source "$(dirname "$0")/lib.sh"
@@ -18,6 +24,21 @@ kc get namespace "$NS" >/dev/null 2>&1 || kc create namespace "$NS" >/dev/null
 kc label namespace "$NS" relay.dev/purpose=secret-source --overwrite >/dev/null
 
 exists() { kc -n "$NS" get secret "$1" >/dev/null 2>&1; }
+
+# --- Carried secrets (portability restore) ----------------------------------------------------------
+# The bundle is {"<secret name>": {"<key>": "<value>"}}; values never touch the disk unencrypted.
+if [ -n "${RELAY_SECRETS_BUNDLE:-}" ]; then
+  age_key=${RELAY_AGE_KEY:-$RELAY_HOME/portability/age.key}
+  [ -s "$age_key" ] || die "no age identity at $age_key to decrypt $RELAY_SECRETS_BUNDLE"
+  bundle=$(age -d -i "$age_key" "$RELAY_SECRETS_BUNDLE") || die "cannot decrypt $RELAY_SECRETS_BUNDLE"
+  for name in $(jq -r 'keys[]' <<<"$bundle"); do
+    jq --arg ns "$NS" --arg n "$name" '{apiVersion: "v1", kind: "Secret", type: "Opaque",
+        metadata: {name: $n, namespace: $ns, labels: {"relay.dev/carried": "true"}},
+        data: (.[$n] | map_values(@base64))}' <<<"$bundle" | kc apply -f - >/dev/null
+    log "imported carried secret $NS/$name"
+  done
+  unset bundle
+fi
 
 # put_literal <name> key=value...: creates a generic Secret from literals unless it already exists.
 put_literal() {
@@ -32,10 +53,10 @@ put_literal() {
 
 
 # --- Local CA (cert-manager ClusterIssuer relay-issuer) ---------------------------------------------
-ca_dir="$RELAY_HOME/ca"
+ca_dir=${CA_DIR:?envs/$RELAY_ENV/env.sh sets no CA_DIR}
 if [ ! -s "$ca_dir/relay-local-ca.key" ]; then
   mkdir -p "$ca_dir"
-  chmod 700 "$RELAY_HOME" "$ca_dir"
+  chmod 700 "$RELAY_HOME" "$(dirname "$ca_dir")" "$ca_dir"
   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 825 \
     -subj "/O=Relay local development/CN=Relay Local CA" \
     -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
@@ -50,28 +71,34 @@ if ! exists relay-local-ca; then
   log "created secret $NS/relay-local-ca"
 fi
 
-# --- S3 (SeaweedFS locally) -------------------------------------------------------------------------
-# One identity per consumer, each limited to its bucket. `s3-admin` is for operators and the smoke test.
-# name|bucket ("*" = all buckets, admin rights)
-s3_identities=("admin|*" "cnpg|relay-backups" "workflows|relay-media" "otel|relay-logs")
-for entry in "${s3_identities[@]}"; do
-  name=${entry%%|*}
-  put_literal "s3-$name" "access_key_id=relay-$name-$(rand 12)" "secret_access_key=$(rand 40)"
-done
-
-# SeaweedFS IAM config, rebuilt from the identity Secrets above so it always matches them.
-s3_config=$(for entry in "${s3_identities[@]}"; do
-  name=${entry%%|*} bucket=${entry#*|}
-  secret=$(kc -n "$NS" get secret "s3-$name" -o json)
-  jq -n --arg name "$name" --arg bucket "$bucket" \
-    --arg ak "$(jq -r '.data.access_key_id | @base64d' <<<"$secret")" \
-    --arg sk "$(jq -r '.data.secret_access_key | @base64d' <<<"$secret")" \
-    '{name: $name, credentials: [{accessKey: $ak, secretKey: $sk}],
-      actions: (if $bucket == "*" then ["Admin", "Read", "Write", "List", "Tagging"]
-                else ["Read:\($bucket)", "Write:\($bucket)", "List:\($bucket)", "Tagging:\($bucket)"] end)}'
-done | jq -cs '{identities: .}')
-kc -n "$NS" create secret generic seaweedfs-s3-config --from-literal=seaweedfs_s3_config="$s3_config" \
-  --dry-run=client -o yaml | kc apply -f - >/dev/null
+# --- S3 ---------------------------------------------------------------------------------------------
+case ${S3_MODE:-in-cluster} in
+in-cluster)
+  for entry in "${S3_IDENTITIES[@]}"; do
+    name=${entry%%|*}
+    put_literal "s3-$name" "access_key_id=relay-$name-$(rand 12)" "secret_access_key=$(rand 40)"
+  done
+  # SeaweedFS IAM config, rebuilt from the identity Secrets above so it always matches them.
+  s3_config=$(for entry in "${S3_IDENTITIES[@]}"; do
+    name=${entry%%|*}
+    kc -n "$NS" get secret "s3-$name" -o json | jq --arg n "$name" '{($n): (.data | map_values(@base64d))}'
+  done | jq -s add | seaweedfs_iam_config)
+  kc -n "$NS" create secret generic seaweedfs-s3-config --from-literal=seaweedfs_s3_config="$s3_config" \
+    --dry-run=client -o yaml | kc apply -f - >/dev/null
+  ;;
+external)
+  # The endpoint's identities are the source of truth; the Secrets follow them.
+  identities="${S3_STATE_DIR:?}/identities.json"
+  [ -s "$identities" ] && [ -s "${S3_CA_FILE:?}" ] || die "no external S3 state in $S3_STATE_DIR: run scripts/external-s3.sh up"
+  for entry in "${S3_IDENTITIES[@]}"; do
+    name=${entry%%|*}
+    jq -r --arg n "$name" '.[$n] | "access_key_id=\(.access_key_id)\nsecret_access_key=\(.secret_access_key)"' "$identities" |
+      kc -n "$NS" create secret generic "s3-$name" --from-env-file=/dev/stdin --dry-run=client -o yaml | kc apply -f - >/dev/null
+  done
+  kc -n "$NS" create secret generic s3-ca --from-file=ca.crt="$S3_CA_FILE" --dry-run=client -o yaml | kc apply -f - >/dev/null
+  ;;
+*) die "unknown S3_MODE '$S3_MODE'" ;;
+esac
 
 # --- Keycloak ---------------------------------------------------------------------------------------
 put_literal keycloak-admin "username=relay-admin" "password=$(rand 32)"

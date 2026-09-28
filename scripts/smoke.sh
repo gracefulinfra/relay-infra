@@ -7,8 +7,8 @@ set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 require kubectl curl jq
 
-DOMAIN=${DOMAIN:-relay.localtest.me}
-CA_CERT=${CA_CERT:-$RELAY_HOME/ca/relay-local-ca.crt}
+DOMAIN=${DOMAIN:?envs/$RELAY_ENV/env.sh sets no DOMAIN}
+CA_CERT=${CA_CERT:-$CA_DIR/relay-local-ca.crt}
 failures=0
 
 pass() { printf '  \033[32mPASS\033[0m %s\n' "$*"; }
@@ -57,15 +57,22 @@ http_redirects() {
   }
 }
 
-# --- S3 helpers: requests run inside the SeaweedFS pod (the S3 endpoint is not routed). ----------------
-S3_EXEC=(kc -n seaweedfs exec deploy/seaweedfs-all-in-one --)
+# --- S3 helpers ------------------------------------------------------------------------------------------
+# The S3 endpoint is not routed through the Gateway. In-cluster SeaweedFS is reached from inside its pod;
+# an external endpoint (S3_MODE=external) from here, over TLS with its CA. Credentials are the cluster's own.
 s3_creds() { kc -n relay-secret-source get secret "s3-$1" -o json | jq -r '"\(.data.access_key_id | @base64d):\(.data.secret_access_key | @base64d)"'; }
-# s3_status <identity|anonymous> <path>: HTTP status of a GET against the S3 gateway.
-s3_status() {
-  local auth=()
-  [ "$1" = anonymous ] || auth=(--aws-sigv4 "aws:amz:us-east-1:s3" --user "$(s3_creds "$1")")
-  "${S3_EXEC[@]}" curl -s -o /dev/null -w '%{http_code}' "${auth[@]}" "http://localhost:8333$2"
+s3_curl() { # s3_curl <identity|anonymous> <path> [curl args...]
+  local who=$1 path=$2 auth=()
+  shift 2
+  [ "$who" = anonymous ] || auth=(--aws-sigv4 "aws:amz:us-east-1:s3" --user "$(s3_creds "$who")")
+  if [ "${S3_MODE:-in-cluster}" = external ]; then
+    curl -s --max-time 20 --cacert "$S3_CA_FILE" "${auth[@]}" "$@" "$S3_ENDPOINT$path"
+  else
+    kc -n "$S3_NAMESPACE" exec "deploy/$S3_SERVICE" -- curl -s "${auth[@]}" "$@" "http://localhost:$S3_SERVICE_PORT$path"
+  fi
 }
+# s3_status <identity|anonymous> <path>: HTTP status of a GET against the S3 endpoint.
+s3_status() { s3_curl "$1" "$2" -o /dev/null -w '%{http_code}'; }
 expect_s3() { # expect_s3 <identity> <path> <status>
   local got
   got=$(s3_status "$1" "$2")
@@ -76,20 +83,17 @@ expect_s3() { # expect_s3 <identity> <path> <status>
 }
 buckets_exist() {
   local list missing=()
-  list=$("${S3_EXEC[@]}" sh -c 'echo s3.bucket.list | weed shell' 2>/dev/null)
-  for b in relay-media relay-feeds relay-backups relay-logs; do grep -q "^ *$b\b" <<<"$list" || missing+=("$b"); done
+  list=$(s3_curl admin /)
+  for b in relay-media relay-feeds relay-backups relay-logs; do grep -q "<Name>$b</Name>" <<<"$list" || missing+=("$b"); done
   [ ${#missing[@]} -eq 0 ] || {
     echo "missing buckets: ${missing[*]}"
     return 1
   }
 }
-s3_list() { # s3_list <bucket> <prefix>: ListObjectsV2 XML (admin identity)
-  "${S3_EXEC[@]}" curl -s --aws-sigv4 "aws:amz:us-east-1:s3" --user "$(s3_creds admin)" \
-    "http://localhost:8333/$1?list-type=2&prefix=$2"
-}
+s3_list() { s3_curl admin "/$1?list-type=2&prefix=$2"; } # s3_list <bucket> <prefix>: ListObjectsV2 XML
 
 cnpg_backup() {
-  local name id
+  local name id dest prefix
   name="smoke-$(date +%s)"
   kc apply -f - >/dev/null <<YAML
 apiVersion: postgresql.cnpg.io/v1
@@ -105,8 +109,11 @@ YAML
     return 1
   }
   id=$(kc -n relay-db get backup "$name" -o jsonpath='{.status.backupId}')
-  s3_list relay-backups "cnpg/relay/base/$id/" | grep -q "<Key>cnpg/relay/base/$id/" || {
-    echo "backup $id completed but nothing under s3://relay-backups/cnpg/relay/base/$id/"
+  # The env decides where backups go (envs/local-b archives next to the origin copy).
+  dest=$(kc -n relay-db get objectstore relay-backups -o jsonpath='{.spec.configuration.destinationPath}')
+  prefix=${dest#s3://relay-backups/}
+  s3_list relay-backups "${prefix}relay/base/$id/" | grep -q "<Key>${prefix}relay/base/$id/" || {
+    echo "backup $id completed but nothing under ${dest}relay/base/$id/"
     return 1
   }
   kc -n relay-db delete backup "$name" --wait=false >/dev/null
@@ -169,7 +176,7 @@ check "Gateway relay is Programmed" condition_true gateway relay relay-gateway P
 check "http:// redirects to https://" http_redirects
 check "Argo CD UI via https://argocd.$DOMAIN" https_status argocd / 200
 
-log "Object storage (SeaweedFS S3)"
+log "Object storage (S3, ${S3_MODE:-in-cluster})"
 check "buckets relay-media, relay-feeds, relay-backups, relay-logs exist" buckets_exist
 check "anonymous bucket listing is denied" expect_s3 anonymous / 403
 check "anonymous read of relay-media is denied" expect_s3 anonymous /relay-media 403

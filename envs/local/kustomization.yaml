@@ -12,8 +12,9 @@ resources:
   - ../../platform/postgres
   - ../../platform/keycloak
   - ../../platform/argo-workflows
-  - secret-source.yaml
-  - local-ca.yaml
+components:
+  # Secrets: ESO's Kubernetes provider reads what scripts/secrets.sh generated in relay-secret-source.
+  - ../components/local-secrets
 patches:
   # Base domain: *.relay.localtest.me resolves to 127.0.0.1.
   - target: {kind: Gateway, name: relay}
@@ -23,8 +24,6 @@ patches:
   - target: {kind: HTTPRoute, name: argocd}
     patch: |-
       - {op: replace, path: /spec/hostnames/0, value: argocd.relay.localtest.me}
-  # Secrets: ESO's Kubernetes provider reads what scripts/secrets.sh generated in relay-secret-source.
-  - path: patches/secret-store.yaml
   # TLS: a CA issuer over the local CA that scripts/secrets.sh keeps in $RELAY_HOME.
   - target: {kind: ClusterIssuer, name: relay-issuer}
     patch: |-
