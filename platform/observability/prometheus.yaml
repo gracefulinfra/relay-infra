@@ -1,0 +1,105 @@
+# Metrics: one Prometheus server, no operator and no CRDs. The laptop profile rules out
+# kube-prometheus-stack, whose CRDs OOM-killed the Argo CD controller and whose operator, exporters,
+# and rule set pushed the node past its memory (P0-05 PR3). Relay services push metrics over OTLP
+# through the collector. Prometheus also scrapes itself and any pod or Service annotated with
+# prometheus.io/scrape: "true". Alertmanager is off until P1-18 defines alert routing.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: prometheus
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-30"
+spec:
+  project: platform
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: prometheus
+    targetRevision: 29.35.0 # Prometheus v3.15.0
+    helm:
+      releaseName: prometheus
+      valuesObject:
+        fullnameOverride: prometheus
+        alertmanager: {enabled: false}
+        kube-state-metrics: {enabled: false}
+        prometheus-node-exporter: {enabled: false}
+        prometheus-pushgateway: {enabled: false}
+        configmapReload:
+          prometheus:
+            resources:
+              requests: {cpu: 5m, memory: 16Mi}
+              limits: {memory: 48Mi}
+        server:
+          # The OTLP receiver takes metrics from the collector at /api/v1/otlp/v1/metrics.
+          extraFlags: [web.enable-lifecycle, web.enable-otlp-receiver]
+          retention: 2d
+          retentionSize: 1GB
+          global:
+            scrape_interval: 30s
+            evaluation_interval: 30s
+          persistentVolume:
+            enabled: true
+            size: 2Gi
+          resources:
+            requests: {cpu: 20m, memory: 128Mi}
+            limits: {memory: 384Mi}
+          containerSecurityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            readOnlyRootFilesystem: true
+            seccompProfile: {type: RuntimeDefault}
+        # Only what the laptop needs: Prometheus itself and opted-in pods and Services.
+        scrapeConfigs:
+          prometheus:
+            static_configs:
+              - targets: [localhost:9090]
+          kubernetes-pods:
+            kubernetes_sd_configs: [{role: pod}]
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+                action: keep
+                regex: "true"
+              - source_labels: [__meta_kubernetes_pod_phase]
+                action: drop
+                regex: Pending|Succeeded|Failed|Completed
+              - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+                action: replace
+                target_label: __metrics_path__
+                regex: (.+)
+              - source_labels: [__meta_kubernetes_pod_ip, __meta_kubernetes_pod_annotation_prometheus_io_port]
+                action: replace
+                regex: (.+);(\d+)
+                replacement: $1:$2
+                target_label: __address__
+              - source_labels: [__meta_kubernetes_namespace]
+                target_label: namespace
+              - source_labels: [__meta_kubernetes_pod_name]
+                target_label: pod
+          kubernetes-service-endpoints:
+            kubernetes_sd_configs: [{role: endpointslice}]
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
+                action: keep
+                regex: "true"
+              - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_path]
+                action: replace
+                target_label: __metrics_path__
+                regex: (.+)
+              - source_labels: [__address__, __meta_kubernetes_service_annotation_prometheus_io_port]
+                action: replace
+                regex: ([^:]+)(?::\d+)?;(\d+)
+                replacement: $1:$2
+                target_label: __address__
+              - source_labels: [__meta_kubernetes_namespace]
+                target_label: namespace
+              - source_labels: [__meta_kubernetes_service_name]
+                target_label: service
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true

@@ -30,7 +30,9 @@ is one root per cluster, and everything else is a child resource with a sync wav
 | -60 | `ExternalSecret`s, `ClusterIssuer/relay-issuer`, `GatewayClass`, the CNPG barman-cloud plugin (needs cert-manager) |
 | -50 | `Gateway/relay` (cert-manager issues the listener certificate), SeaweedFS (its PostSync hook creates the buckets) |
 | -40 | `HTTPRoute`s, CNPG `ObjectStore`s and `Cluster`s (`relay`, `keycloak-db`), Argo Workflows, the Keycloak realm ConfigMap |
-| -30 | Keycloak (needs its database), `ScheduledBackup`s |
+| -30 | Keycloak (needs its database), `ScheduledBackup`s, Prometheus, Grafana, Tempo |
+| -25 | The OTel Collector (after the backends it exports to) |
+| -20 | `HTTPRoute/grafana` (after the Grafana Service exists) |
 
 Argo CD waits for each wave to be Healthy before starting the next. A child Application counts as
 Healthy only through the `resource.customizations.health.argoproj.io_Application` check in the Argo CD
@@ -58,6 +60,47 @@ spec: {cluster: {name: relay}, method: plugin, pluginConfiguration: {name: barma
 EOF
 kubectl -n relay-db get backup manual-backup -w
 ```
+
+## Observability
+
+Everything telemetry goes through one entry point, the OpenTelemetry Collector, so Relay services only
+ever speak OTLP (conventions: observability).
+
+```text
+Relay services ──OTLP──▶ otel-collector (DaemonSet, :4317 gRPC / :4318 HTTP)
+pod stdout/stderr ─filelog─┘      │
+                                   ├─ traces  ─▶ Tempo (monolithic, local disk, 24 h)
+                                   ├─ metrics ─▶ Prometheus OTLP receiver (2 d or 1 GB)
+                                   └─ logs    ─▶ s3://relay-logs/otel/year=/month=/day=/hour=/minute=/*.json.gz
+Prometheus also scrapes itself and pods/Services annotated prometheus.io/scrape: "true".
+Grafana (https://grafana.<domain>) reads Prometheus and Tempo.
+```
+
+| Service | Where | Notes |
+| --- | --- | --- |
+| Prometheus | `observability` | The plain `prometheus` chart: one server, **no operator and no CRDs**, 2 d or 1 GB retention on a 2 Gi PVC, OTLP receiver on. It scrapes itself and anything annotated `prometheus.io/scrape: "true"` (Tempo is). Relay services push metrics over OTLP instead of being scraped. **Alertmanager is off** until P1-18 defines alert routing. Not routed |
+| Grafana | `observability` | `https://grafana.<domain>`. The login is in `relay-secret-source/grafana-admin` (generated; never a chart default). Two provisioned datasources, Prometheus (`uid: prometheus`) and Tempo (`uid: tempo`), with no bundled dashboards and Grafana alerting off. No persistence |
+| Tempo | `observability` | Tempo 3 monolithic (no Kafka), OTLP only, 24 h retention on a 4 Gi PVC. Not routed; query it through Grafana |
+| OTel Collector | `observability` | contrib image (the `awss3` exporter), one pod per node. Pods send OTLP to `otel-collector.observability.svc:4317/4318` (`internalTrafficPolicy: Local`). The `filelog` receiver reads `/var/log/pods`, which needs uid 0: every capability is dropped and the root filesystem is read-only. Logs are batched (30 s or 5,000 records) into gzipped OTLP JSON objects in `relay-logs` with the `otel` identity, which can write only that bucket |
+
+Read logs back out of object storage (they survive the cluster, and the portability rehearsal copies them):
+
+```bash
+secret() { kubectl --context k3d-relay -n relay-secret-source get secret s3-admin -o jsonpath="{.data.$1}" | base64 -d; }
+kubectl --context k3d-relay -n seaweedfs exec deploy/seaweedfs-all-in-one -- curl -s \
+  --aws-sigv4 aws:amz:us-east-1:s3 --user "$(secret access_key_id):$(secret secret_access_key)" \
+  "http://localhost:8333/relay-logs?list-type=2&prefix=otel/"
+```
+
+Each object is gzipped OTLP JSON: download one the same way and pipe it through `gunzip | jq`.
+
+### Why not kube-prometheus-stack
+
+It was deployed first in this PR and removed. Its operator CRDs are several MB each, and reconciling
+them OOM-killed the Argo CD application controller at 768 Mi. Together with the operator, kube-state-metrics,
+node-exporter, and its rule set, it pushed the 7.75 GiB node into memory pressure: pods were
+evicted, and the controller could no longer sync the fix. The plain chart gives the same OTLP-first
+metrics path at a fraction of the size. Revisit it only for a real cluster with memory to spare.
 
 ## Adding a platform service
 
@@ -91,3 +134,7 @@ kubectl -n relay-db get backup manual-backup -w
 | `make conformance-s3` (or the CI `s3-conformance` job) fails | A hard S3 case failed: storage no longer behaves the way Relay needs. Read the case's sanitized trace in the `go test -v` output (or the `s3-conformance` artifact) and the report's observations. Do not merge a SeaweedFS or storage change until it passes; see [conformance/s3/README.md](../conformance/s3/README.md). "SEAWEEDFS_IMAGE tag ... does not match" means the `Makefile` image and the chart in `platform/seaweedfs` were bumped separately: update them together. |
 | A smoke workflow never finishes | `kubectl -n relay-media get wf`, then `kubectl -n relay-media logs deploy/argo-workflows-workflow-controller`. Parallelism is 1, so a stuck workflow blocks the queue: delete it. |
 | The local CA expired (825 days) or leaked | `rm -rf ~/.relay-local`, then `make down && make up`, and trust the new CA. |
+| Grafana login fails, or it shows the chart's default password prompt | `relay-secret-source/grafana-admin` missing when Grafana first started: `make secrets`, then `kubectl -n observability rollout restart deploy/grafana`. |
+| Smoke "every Prometheus scrape target is up" fails | `up == 0` names the job and pod. Check the pod's `prometheus.io/port` and `prometheus.io/path` annotations, then the pod itself. |
+| No new objects under `s3://relay-logs/otel/` | `kubectl -n observability logs ds/otel-collector`: `AccessDenied` means the `otel` identity or `otel-s3` Secret is wrong (`make secrets`); a TLS error on an external endpoint means the `s3-ca` Secret is missing. Objects appear up to 30 s after the logs, because of batching. |
+| Traces sent but not in Tempo | Check the collector for `otlp_grpc/tempo` export errors, then `kubectl -n observability logs sts/tempo`. Tempo keeps 24 h only. |

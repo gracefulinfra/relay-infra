@@ -38,7 +38,11 @@ sync() {
   GIT_INDEX_FILE="$tmp/index" git -C "$REPO_ROOT" read-tree HEAD
   GIT_INDEX_FILE="$tmp/index" git -C "$REPO_ROOT" add -A
   tree=$(GIT_INDEX_FILE="$tmp/index" git -C "$REPO_ROOT" write-tree)
-  commit=$(git -C "$REPO_ROOT" commit-tree "$tree" -p HEAD -m "local snapshot of $(git -C "$REPO_ROOT" rev-parse --short HEAD)")
+  # A shallow clone (CI's actions/checkout) cannot push a commit whose parent history is missing
+  # ("shallow update not allowed"), and Argo CD only needs the tree, so the snapshot has no parent there.
+  local parent=(-p HEAD)
+  [ "$(git -C "$REPO_ROOT" rev-parse --is-shallow-repository)" = true ] && parent=()
+  commit=$(git -C "$REPO_ROOT" commit-tree "$tree" "${parent[@]}" -m "local snapshot of $(git -C "$REPO_ROOT" rev-parse --short HEAD)")
 
   local port=${LOCAL_GIT_PORT:-18080}
   kc -n relay-git port-forward svc/git-server "$port:80" >/dev/null 2>&1 &

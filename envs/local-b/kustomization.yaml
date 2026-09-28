@@ -15,6 +15,7 @@ resources:
   - ../../platform/postgres
   - ../../platform/keycloak
   - ../../platform/argo-workflows
+  - ../../platform/observability
   - storage-class.yaml
   - s3-ca.yaml
   - restore.yaml
@@ -109,3 +110,26 @@ patches:
             plugin:
               name: barman-cloud.cloudnative-pg.io
               parameters: {barmanObjectName: relay-origin, serverName: keycloak-db}
+  # Observability: the Grafana hostname, and the S3 endpoint the collector ships logs to (relay-logs).
+  - target: {kind: HTTPRoute, name: grafana}
+    patch: |-
+      - {op: replace, path: /spec/hostnames/0, value: grafana.relay-b.localtest.me}
+  - target: {kind: Application, name: grafana}
+    patch: |-
+      - op: replace
+        path: /spec/source/helm/valuesObject/grafana.ini/server/root_url
+        value: "https://grafana.relay-b.localtest.me"
+  - target: {kind: Application, name: otel-collector}
+    patch: |-
+      - op: replace
+        path: /spec/source/helm/valuesObject/config/exporters/awss3~1logs/s3uploader/endpoint
+        value: "https://s3.relay-b.internal:8443"
+      - op: replace
+        path: /spec/source/helm/valuesObject/config/exporters/awss3~1logs/s3uploader/disable_ssl
+        value: false
+      # The external endpoint's private CA (s3-ca.yaml), for the AWS SDK inside the collector.
+      - {op: add, path: /spec/source/helm/valuesObject/extraEnvs, value: [{name: AWS_CA_BUNDLE, value: /etc/relay/s3-ca/ca.crt}]}
+      - {op: add, path: /spec/source/helm/valuesObject/extraVolumes, value: [{name: s3-ca, secret: {secretName: s3-ca}}]}
+      - op: add
+        path: /spec/source/helm/valuesObject/extraVolumeMounts
+        value: [{name: s3-ca, mountPath: /etc/relay/s3-ca, readOnly: true}]

@@ -111,6 +111,7 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: make up
+        shell: bash # -eo pipefail, so a failing make up fails the step despite tee
         run: |
           # The CI identity commits the snapshot pushed to the in-cluster git server.
           git config --global user.email ci@relay.invalid
@@ -118,6 +119,7 @@ jobs:
           LOCAL_GIT=1 scripts/up.sh 2>&1 | tee up.log
           { echo "### make up"; echo '```'; tail -8 up.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: smoke
+        shell: bash # -eo pipefail, so a failing smoke check fails the step despite tee
         run: |
           scripts/smoke.sh 2>&1 | tee smoke.log
           { echo "### smoke"; echo '```'; cat smoke.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

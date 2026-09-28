@@ -1,0 +1,110 @@
+# OpenTelemetry Collector, one per node (a single pod on the laptop). It is the only telemetry
+# entry point:
+#   - OTLP from Relay services (P1 onward) on the `otel-collector` Service, ports 4317/4318.
+#   - Container logs from every pod on the node (the logsCollection preset).
+# and it routes:
+#   traces  -> Tempo
+#   metrics -> Prometheus's OTLP receiver
+#   logs    -> s3://relay-logs/otel/ (the awss3 exporter, OTLP JSON, gzip), with the relay-logs-only
+#              `otel` identity. Log storage is object storage, so it survives the cluster and is
+#              covered by the portability rehearsal.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: otel-collector
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-25"
+spec:
+  project: platform
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  source:
+    repoURL: https://open-telemetry.github.io/opentelemetry-helm-charts
+    chart: opentelemetry-collector
+    targetRevision: 0.173.1 # Collector 0.160.0
+    helm:
+      releaseName: otel-collector
+      valuesObject:
+        fullnameOverride: otel-collector
+        mode: daemonset
+        # awss3 is a contrib component.
+        image:
+          repository: docker.io/otel/opentelemetry-collector-contrib
+          tag: 0.160.0
+          digest: sha256:799dc6cf12c96192af37b5bdba804da8c10b3bc563b43cb90c3f3c58d9572ad6
+        command: {name: otelcol-contrib}
+        presets:
+          logsCollection: {enabled: true, includeCollectorLogs: false, storeCheckpoints: false}
+          kubernetesAttributes: {enabled: true}
+        service:
+          enabled: true
+          # One collector per node: pods on a node send to that node's collector.
+          internalTrafficPolicy: Local
+        ports:
+          jaeger-compact: {enabled: false}
+          jaeger-thrift: {enabled: false}
+          jaeger-grpc: {enabled: false}
+          zipkin: {enabled: false}
+          metrics: {enabled: true}
+        extraEnvsFrom:
+          - secretRef: {name: otel-s3}
+        config:
+          exporters:
+            otlp/tempo:
+              endpoint: tempo.observability.svc:4317
+              tls: {insecure: true}
+            otlphttp/prometheus:
+              metrics_endpoint: http://prometheus-server.observability.svc/api/v1/otlp/v1/metrics
+              tls: {insecure: true}
+            awss3/logs:
+              s3uploader:
+                region: us-east-1
+                s3_bucket: relay-logs
+                s3_prefix: otel
+                s3_partition_format: "year=%Y/month=%m/day=%d/hour=%H/minute=%M"
+                endpoint: https://s3.example.invalid
+                s3_force_path_style: true
+                disable_ssl: false
+                compression: gzip
+              marshaler: otlp_json
+          processors:
+            batch/logs:
+              # Fewer, larger objects: flush every 30 s or 5,000 records.
+              timeout: 30s
+              send_batch_size: 5000
+          service:
+            pipelines:
+              traces:
+                receivers: [otlp]
+                processors: [memory_limiter, batch]
+                exporters: [otlp/tempo]
+              metrics:
+                receivers: [otlp]
+                processors: [memory_limiter, batch]
+                exporters: [otlphttp/prometheus]
+              logs:
+                # The presets add the filelog receiver and the k8sattributes processor.
+                receivers: [otlp]
+                processors: [memory_limiter, batch/logs]
+                exporters: [awss3/logs]
+        resources:
+          requests: {cpu: 20m, memory: 96Mi}
+          limits: {memory: 320Mi}
+        # Pod log files under /var/log/pods are root:root 0640, so reading them needs uid 0. Every
+        # capability is still dropped, the root filesystem is read-only, and the host paths are read-only.
+        securityContext:
+          runAsUser: 0
+          runAsGroup: 0
+          runAsNonRoot: false
+          allowPrivilegeEscalation: false
+          capabilities: {drop: [ALL]}
+          readOnlyRootFilesystem: true
+          seccompProfile: {type: RuntimeDefault}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
