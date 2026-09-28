@@ -168,6 +168,7 @@ jobs:
           kubectl --context k3d-relay get pods -A -o json | jq -r '.items[] | .metadata as $m
             | .spec.containers as $spec | .status.containerStatuses[]? | select(.restartCount > 0)
             | . as $s | ($spec[] | select(.name == $s.name) | .resources.limits.memory // "none") as $limit
-            | "\($m.namespace)/\($m.name) \(.name) restarts=\(.restartCount) last=\(.lastState.terminated.reason // "-") limit=\($limit)"' || true
+            | "\($m.namespace)/\($m.name) \(.name) restarts=\(.restartCount)"
+              + " last=\(.lastState.terminated.reason // "-") limit=\($limit)"' || true
           kubectl --context k3d-relay top pods -A --sort-by=memory 2>/dev/null | head -15 || true
           kubectl --context k3d-relay get events -A --sort-by=.lastTimestamp | tail -100 || true
