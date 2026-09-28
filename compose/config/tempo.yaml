@@ -1,0 +1,20 @@
+# Tempo 3 monolithic, as platform/observability/tempo.yaml renders it: OTLP only, local disk, 24 h.
+stream_over_http_enabled: false
+multitenancy_enabled: false
+usage_report: {reporting_enabled: false}
+server: {http_listen_port: 3200}
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc: {endpoint: 0.0.0.0:4317}
+        http: {endpoint: 0.0.0.0:4318}
+backend_scheduler:
+  provider:
+    compaction:
+      compaction: {block_retention: 24h}
+storage:
+  trace:
+    backend: local
+    local: {path: /var/tempo/traces}
+    wal: {path: /var/tempo/wal}

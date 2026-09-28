@@ -24,6 +24,27 @@ Measured with `kubectl top` and `docker stats` once `make smoke` passed. "Node a
 | P0-05 PR2: + CNPG ×2, SeaweedFS, Keycloak, Argo Workflows | ≈2.3 GiB | ≈4.4 GiB | keycloak ≈630 Mi, argocd-application-controller ≈530 Mi, each PostgreSQL instance ≈110–130 Mi, seaweedfs ≈100 Mi |
 | P0-05 PR3: + Prometheus, Grafana, OTel Collector, Tempo | ≈2.9 GiB | ≈4.55 GiB (of 7.75) | observability ≈690 Mi in total: prometheus-server ≈340 Mi, grafana ≈225 Mi, otel-collector ≈75 Mi, tempo ≈50 Mi |
 
+### CPU and disk (P0-05 PR3, the whole platform, at rest after `make up`)
+
+| | Measured |
+| --- | --- |
+| Node CPU | ≈670m of 10 cores (≈7%). All pods ≈350m. Largest: prometheus-server ≈130m, the PostgreSQL instances ≈30–40m each, otel-collector ≈40m. During start-up it peaks near 5 cores (Prometheus WAL replay, Argo CD's first sync) |
+| Container images in the node | ≈8.8 GB (`/var/lib/rancher/k3s/agent/containerd`) |
+| Volume data | ≈560 MB used of 20 Gi claimed: prometheus-server ≈200 MB, keycloak-db ≈180 MB, relay-db ≈160 MB, seaweedfs ≈17 MB (plus uploaded media), tempo < 1 MB |
+
+Measured with `kubectl top` and `du` in the k3s node container. Disk grows mainly with SeaweedFS
+media (see the P0-08 disk budget) and Prometheus up to its 1 GB cap.
+
+### Dev stack (Docker Compose, ADR 0009)
+
+| | Core (PostgreSQL, SeaweedFS, Keycloak) | With `PROFILE=observability` |
+| --- | --- | --- |
+| Memory (`docker stats`) | ≈0.7 GiB: keycloak ≈540 Mi, seaweedfs ≈86 Mi, postgres ≈70 Mi | ≈1.2 GiB: plus grafana ≈380 Mi, prometheus ≈50 Mi, otel-collector ≈40 Mi, tempo ≈30 Mi |
+| Start | 16 s with data (`make dev-down`, then `make dev`) | 52 s on first start, images pulled |
+
+The dev stack and the k3d cluster do not fit the 7.75 GiB VM together: `make stop` one before starting
+the other.
+
 P0-05 PR3: kube-prometheus-stack was tried first and **did not fit**. Reconciling its CRDs OOM-killed
 the Argo CD application controller at 768 Mi, in a loop, and the operator, exporters, and rules pushed
 the node to about 6 GiB, where it was briefly NotReady and pods were evicted. The plain Prometheus chart
@@ -43,7 +64,7 @@ The target is ≤ 10 minutes for `make up` on this machine. It's a benchmark, no
 
 | Stage | Cold start | Cached start |
 | --- | --- | --- |
-| P0-05 PR3 | **4m 46s** fresh cluster (`make down`, then `LOCAL_GIT=1 make up`; the k3s image and `.local/` tools were cached, and container images were pulled again); platform sync 3m 36s | not re-measured |
+| P0-05 PR3 | **4m 46s** fresh cluster (`make down`, then `LOCAL_GIT=1 make up`; the k3s image and `.local/` tools were cached, and container images were pulled again); platform sync 3m 36s | **1m 29s** (`make stop` → `LOCAL_GIT=1 make up`) |
 | P0-05 PR2 | **4m 56s** (same procedure; platform sync 3m 47s, about 100 s of it ESO bootstrapping its webhook certificate) | **55s** |
 | P0-05 PR1 | **2m 45s** (`make down`, k3s image and `.local/` tools deleted; container images pulled from the internet) | **41s** (`make stop` → `make up`) |
 
