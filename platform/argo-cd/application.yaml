@@ -58,6 +58,11 @@ spec:
         applicationSet:
           replicas: 0
         controller:
+          # Measured at about 640 Mi of its 768 Mi limit with the full platform, and it restarted once
+          # mid-sync in CI. GOMEMLIMIT makes the GC work before the cgroup limit is reached; the limit
+          # itself stays put (laptop profile).
+          env:
+            - {name: GOMEMLIMIT, value: 640MiB}
           resources:
             requests: {cpu: 100m, memory: 256Mi}
             limits: {memory: 768Mi}

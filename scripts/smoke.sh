@@ -90,7 +90,13 @@ buckets_exist() {
     return 1
   }
 }
-s3_list() { s3_curl admin "/$1?list-type=2&prefix=$2"; } # s3_list <bucket> <prefix>: ListObjectsV2 XML
+# s3_list <bucket> <prefix>: ListObjectsV2 XML. The prefix is percent-encoded: curl 8.5 (Ubuntu 24.04)
+# signs a raw "=" in the query differently from the server, which answers 403 (the partitioned
+# relay-logs keys contain "=").
+s3_list() {
+  local prefix=${2//\//%2F}
+  s3_curl admin "/$1?list-type=2&prefix=${prefix//=/%3D}"
+}
 
 cnpg_backup() {
   local name id dest prefix

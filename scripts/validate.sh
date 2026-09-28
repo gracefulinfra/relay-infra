@@ -32,11 +32,15 @@ pull_chart() {
   local tgz="$dir/$chart-$version.tgz"
   if [ ! -s "$tgz" ]; then
     mkdir -p "$dir"
-    if [[ $repo == http* ]]; then
-      helm pull "$chart" --repo "$repo" --version "$version" --destination "$dir" >/dev/null
-    else
-      helm pull "oci://$repo/$chart" --version "$version" --destination "$dir" >/dev/null
-    fi
+    local ref=(--repo "$repo" "$chart") attempt
+    [[ $repo == http* ]] || ref=("oci://$repo/$chart")
+    # Chart hosts (GitHub release assets, registries) fail transiently; retry a few times, then fail.
+    for attempt in 1 2 3; do
+      helm pull "${ref[@]}" --version "$version" --destination "$dir" >/dev/null && break
+      [ "$attempt" -lt 3 ] || die "helm pull $chart $version from $repo failed 3 times"
+      warn "helm pull $chart $version failed (attempt $attempt); retrying"
+      sleep $((attempt * 5))
+    done
   fi
   printf '%s' "$tgz"
 }
