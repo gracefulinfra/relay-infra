@@ -22,6 +22,9 @@
 : "${EXTERNAL_S3_NAME:=relay-b-s3}"
 : "${EXTERNAL_S3_NETWORK:=relay-b}"
 : "${EXTERNAL_S3_SUBNET:=172.29.0.0/24}"
+# Explicit, because the Linux Docker Engine records no gateway for a network created with only
+# --subnet, and k3d then cannot create a cluster on it (Docker Desktop fills one in).
+: "${EXTERNAL_S3_GATEWAY:=172.29.0.1}"
 # Dynamic addresses (the k3d nodes) come from the upper half, so the fixed S3 address never collides.
 : "${EXTERNAL_S3_IP_RANGE:=172.29.0.128/25}"
 : "${EXTERNAL_S3_IP:=172.29.0.10}"
