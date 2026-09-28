@@ -65,9 +65,9 @@ EOF
 | Phase | Step | Wall clock | Bytes | Result |
 | --- | --- | --- | --- | --- |
 EOF
-  while IFS=$'\t' read -r phase name secs bytes result; do
-    printf '| %s | %s | %s | %s | %s |\n' "$phase" "$name" "$(dur "$secs")" "${bytes:+$(mib "$bytes")}" "$result"
-  done <"$RUN_DIR/steps.tsv"
+  # awk, not `read`: a tab IFS collapses the empty bytes column.
+  awk -F'\t' '{b = ($4 == "" ? "" : sprintf("%.1f MiB", $4 / 1048576))
+    printf "| %s | %s | %dm %02ds | %s | %s |\n", $1, $2, $3 / 60, $3 % 60, b, $5}' "$RUN_DIR/steps.tsv"
   cat <<EOF
 
 ## Manual steps
