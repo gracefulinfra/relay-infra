@@ -108,6 +108,9 @@ put_literal keycloak-test-users \
   "staff_username=staff.test" "staff_password=$(rand 24)" "staff_totp_secret=$(rand 20)" \
   "listener_username=listener.test" "listener_password=$(rand 24)"
 
+# --- Grafana -----------------------------------------------------------------------------------------
+put_literal grafana-admin "admin-user=relay-admin" "admin-password=$(rand 32)"
+
 # --- GHCR pull secret (optional) ---------------------------------------------------------------------
 if [ -n "${GHCR_TOKEN:-}" ] && ! exists ghcr-pull; then
   kc -n "$NS" create secret docker-registry ghcr-pull --docker-server=ghcr.io \

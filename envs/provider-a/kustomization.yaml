@@ -13,6 +13,7 @@ resources:
   - ../../platform/postgres
   - ../../platform/keycloak
   - ../../platform/argo-workflows
+  - ../../platform/observability
 patches:
   # Base domain.
   - target: {kind: Gateway, name: relay}
@@ -65,6 +66,23 @@ patches:
   - target: {kind: Deployment, name: keycloak}
     patch: |-
       - {op: replace, path: /spec/template/spec/containers/0/env/0/value, value: "https://auth.relay.provider-a.example"}
+  # Observability: the Grafana hostname, and the S3 endpoint the collector ships logs to (relay-logs).
+  - target: {kind: HTTPRoute, name: grafana}
+    patch: |-
+      - {op: replace, path: /spec/hostnames/0, value: grafana.relay.provider-a.example}
+  - target: {kind: Application, name: grafana}
+    patch: |-
+      - op: replace
+        path: /spec/source/helm/valuesObject/grafana.ini/server/root_url
+        value: "https://grafana.relay.provider-a.example"
+  - target: {kind: Application, name: otel-collector}
+    patch: |-
+      - op: replace
+        path: /spec/source/helm/valuesObject/config/exporters/awss3~1logs/s3uploader/endpoint
+        value: "https://s3.provider-a.example"
+      - op: replace
+        path: /spec/source/helm/valuesObject/config/exporters/awss3~1logs/s3uploader/disable_ssl
+        value: false
   # S3 endpoint for CNPG backups and Argo Workflows artifacts.
   - target: {kind: ObjectStore}
     patch: |-

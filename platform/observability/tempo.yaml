@@ -1,0 +1,50 @@
+# Trace storage: Grafana Tempo 3 in monolithic mode (no Kafka). The OTel Collector sends it OTLP;
+# Grafana queries it. Laptop profile: local disk, 24 h retention.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tempo
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-30"
+spec:
+  project: platform
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  source:
+    repoURL: https://grafana-community.github.io/helm-charts
+    chart: tempo
+    targetRevision: 3.0.0 # Tempo 3.0.3
+    helm:
+      releaseName: tempo
+      valuesObject:
+        fullnameOverride: tempo
+        tempo:
+          reportingEnabled: false
+          retention: 24h
+          # Only OTLP; the collector is the one sender.
+          receivers:
+            otlp:
+              protocols:
+                grpc: {endpoint: "0.0.0.0:4317"}
+                http: {endpoint: "0.0.0.0:4318"}
+          resources:
+            requests: {cpu: 20m, memory: 128Mi}
+            limits: {memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            readOnlyRootFilesystem: true
+            seccompProfile: {type: RuntimeDefault}
+        persistence:
+          enabled: true
+          size: 4Gi
+        # No ServiceMonitor: there is no Prometheus Operator. Annotation discovery scrapes it.
+        podAnnotations: {prometheus.io/scrape: "true", prometheus.io/port: "3200"}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true

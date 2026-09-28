@@ -12,6 +12,7 @@ resources:
   - ../../platform/postgres
   - ../../platform/keycloak
   - ../../platform/argo-workflows
+  - ../../platform/observability
 components:
   # Secrets: ESO's Kubernetes provider reads what scripts/secrets.sh generated in relay-secret-source.
   - ../components/local-secrets
@@ -38,6 +39,23 @@ patches:
   - target: {kind: Deployment, name: keycloak}
     patch: |-
       - {op: replace, path: /spec/template/spec/containers/0/env/0/value, value: "https://auth.relay.localtest.me"}
+  # Observability: the Grafana hostname, and the S3 endpoint the collector ships logs to (relay-logs).
+  - target: {kind: HTTPRoute, name: grafana}
+    patch: |-
+      - {op: replace, path: /spec/hostnames/0, value: grafana.relay.localtest.me}
+  - target: {kind: Application, name: grafana}
+    patch: |-
+      - op: replace
+        path: /spec/source/helm/valuesObject/grafana.ini/server/root_url
+        value: "https://grafana.relay.localtest.me"
+  - target: {kind: Application, name: otel-collector}
+    patch: |-
+      - op: replace
+        path: /spec/source/helm/valuesObject/config/exporters/awss3~1logs/s3uploader/endpoint
+        value: "http://seaweedfs-all-in-one.seaweedfs.svc:8333"
+      - op: replace
+        path: /spec/source/helm/valuesObject/config/exporters/awss3~1logs/s3uploader/disable_ssl
+        value: true
   # S3 endpoint for CNPG backups and Argo Workflows artifacts.
   - target: {kind: ObjectStore}
     patch: |-

@@ -41,3 +41,17 @@ spec:
   target: {name: s3-ca}
   dataFrom:
     - extract: {key: s3-ca}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: s3-ca
+  namespace: observability
+  annotations:
+    argocd.argoproj.io/sync-wave: "-60"
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: relay-secrets}
+  target: {name: s3-ca}
+  dataFrom:
+    - extract: {key: s3-ca}

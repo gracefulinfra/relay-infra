@@ -150,6 +150,99 @@ YAML
   }
 }
 
+# --- Observability helpers -------------------------------------------------------------------------------
+# Grafana is the one routed observability UI; Prometheus and Tempo are queried through its datasource
+# proxy, so the checks also prove the datasources are wired.
+BUSYBOX=docker.io/library/busybox:1.38.0@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e
+grafana_creds() { kc -n relay-secret-source get secret grafana-admin -o json | jq -r '"\(.data["admin-user"] | @base64d):\(.data["admin-password"] | @base64d)"'; }
+grafana_get() { curl -fsS --max-time 15 --cacert "$CA_CERT" --user "$(grafana_creds)" "https://grafana.$DOMAIN$1"; }
+
+datasource_healthy() { # datasource_healthy <uid>
+  local status
+  status=$(grafana_get "/api/datasources/uid/$1/health" | jq -r .status)
+  [ "$status" = OK ] || {
+    echo "datasource $1: $status"
+    return 1
+  }
+}
+
+prometheus_targets_up() {
+  local down
+  down=$(grafana_get "/api/datasources/proxy/uid/prometheus/api/v1/query?query=up%3D%3D0" | jq -r '.data.result[].metric.job' | sort -u)
+  [ -z "$down" ] || {
+    echo "targets down: $(tr '\n' ' ' <<<"$down")"
+    return 1
+  }
+}
+
+# The IDs for the OTLP checks are made in the main shell, because check runs each step in a subshell.
+SMOKE_ID="smoke-$(date +%s)-$RANDOM"
+TRACE_ID=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+SPAN_ID=$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')
+SMOKE_POD="otlp-$SMOKE_ID"
+
+# otlp_send: from a pod, posts one trace, one metric, and one log record to the collector over OTLP/HTTP,
+# and prints a marker to its own stdout for the filelog path.
+otlp_send() {
+  local now res
+  now="$(date +%s)000000000"
+  res='{"attributes":[{"key":"service.name","value":{"stringValue":"relay-smoke"}}]}'
+  jq -n --arg pod "$SMOKE_POD" --arg image "$BUSYBOX" --arg id "$SMOKE_ID" --arg now "$now" \
+    --arg trace "$TRACE_ID" --arg span "$SPAN_ID" --argjson res "$res" \
+    --arg ep http://otel-collector.observability.svc:4318 '
+    def env($k; $v): {name: $k, value: ($v | tojson)};
+    {apiVersion: "v1", kind: "Pod",
+     metadata: {name: $pod, namespace: "observability", labels: {"relay.dev/smoke": "true"}},
+     spec: {restartPolicy: "Never",
+       securityContext: {runAsNonRoot: true, runAsUser: 65534, seccompProfile: {type: "RuntimeDefault"}},
+       containers: [{name: "otlp", image: $image,
+         securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: ["ALL"]}, readOnlyRootFilesystem: true},
+         resources: {requests: {cpu: "10m", memory: "16Mi"}, limits: {memory: "64Mi"}},
+         command: ["sh", "-c", "set -e; echo \"stdout $ID\"; post() { wget -q -O /dev/null --header \"Content-Type: application/json\" --post-data \"$2\" \"$EP/v1/$1\"; }; post traces \"$traces\"; post metrics \"$metrics\"; post logs \"$logs\""],
+         env: [{name: "ID", value: $id}, {name: "EP", value: $ep},
+           env("traces"; {resourceSpans: [{resource: $res, scopeSpans: [{spans: [{traceId: $trace, spanId: $span, name: "smoke", kind: 1, startTimeUnixNano: $now, endTimeUnixNano: $now}]}]}]}),
+           env("metrics"; {resourceMetrics: [{resource: $res, scopeMetrics: [{metrics: [{name: "relay_smoke", gauge: {dataPoints: [{asInt: "1", timeUnixNano: $now, attributes: [{key: "smoke_id", value: {stringValue: $id}}]}]}}]}]}]}),
+           env("logs"; {resourceLogs: [{resource: $res, scopeLogs: [{logRecords: [{timeUnixNano: $now, severityText: "INFO", body: {stringValue: ("otlp " + $id)}}]}]}]})]}]}}' |
+    kc create -f - >/dev/null
+  kc -n observability wait --for=jsonpath='{.status.phase}'=Succeeded "pod/$SMOKE_POD" --timeout=120s >/dev/null || {
+    echo "pod $SMOKE_POD: $(kc -n observability get pod "$SMOKE_POD" -o jsonpath='{.status.phase}') $(kc -n observability logs "$SMOKE_POD" 2>&1 | tail -1)"
+    return 1
+  }
+}
+
+# retry <seconds> <cmd...>: reruns cmd every 5 s until it succeeds or the time is up.
+retry() {
+  local deadline=$((SECONDS + $1))
+  shift
+  until "$@"; do
+    [ "$SECONDS" -lt "$deadline" ] || return 1
+    sleep 5
+  done
+}
+
+# Tempo answers 200 with an empty trace for an unknown ID, so look for the span itself.
+tempo_has_trace() { grafana_get "/api/datasources/proxy/uid/tempo/api/v2/traces/$TRACE_ID" 2>/dev/null | grep -q '"name":"smoke"'; }
+prometheus_has_metric() {
+  [ "$(grafana_get "/api/datasources/proxy/uid/prometheus/api/v1/query?query=relay_smoke%7Bsmoke_id%3D%22$SMOKE_ID%22%7D" |
+    jq '.data.result | length')" -ge 1 ]
+}
+# s3_has_log <text>: the text is in one of today's newest gzipped OTLP JSON objects under s3://relay-logs/otel/.
+s3_has_log() {
+  local prefix key
+  prefix="otel/year=$(date -u +%Y)/month=$(date -u +%m)/day=$(date -u +%d)/"
+  for key in $(s3_list relay-logs "$prefix" | grep -o '<Key>[^<]*</Key>' | sed 's/<[^>]*>//g' | tail -20); do
+    # Keys hold "=" (the partition format), which SigV4 needs percent-encoded in the path.
+    s3_curl admin "/relay-logs/${key//=/%3D}" | gunzip 2>/dev/null | grep -q "$1" && return 0
+  done
+  return 1
+}
+
+trace_in_tempo() { retry 90 tempo_has_trace || { echo "trace $TRACE_ID not found in Tempo" && return 1; }; }
+metric_in_prometheus() {
+  retry 90 prometheus_has_metric || { echo "relay_smoke{smoke_id=\"$SMOKE_ID\"} not in Prometheus" && return 1; }
+}
+log_in_s3() { retry 120 s3_has_log "$1" || { echo "'$1' not under s3://relay-logs/otel/ for today" && return 1; }; }
+
 oidc_issuer() { # oidc_issuer <realm>
   local issuer
   issuer=$(curl -sS --max-time 10 --cacert "$CA_CERT" "https://auth.$DOMAIN/realms/$1/.well-known/openid-configuration" | jq -r .issuer)
@@ -199,6 +292,21 @@ check "relay-staff login with password + TOTP issues a code" "$REPO_ROOT/scripts
 
 log "Workflows (Argo Workflows)"
 check "a workflow runs in relay-media and stores its artifact in S3" workflow_artifact
+
+log "Observability (Prometheus, Grafana, Tempo, OTel Collector)"
+check "Grafana answers via https://grafana.$DOMAIN" https_status grafana /api/health 200
+check "Grafana datasource Prometheus is healthy" datasource_healthy prometheus
+check "Grafana datasource Tempo is healthy" datasource_healthy tempo
+check "every Prometheus scrape target is up" prometheus_targets_up
+check "otel identity can list relay-logs" expect_s3 otel /relay-logs 200
+check "otel identity cannot list relay-media" expect_s3 otel /relay-media 403
+if check "OTLP trace, metric, and log sent to the collector" otlp_send; then
+  check "the trace reaches Tempo" trace_in_tempo
+  check "the metric reaches Prometheus (OTLP receiver)" metric_in_prometheus
+  check "the OTLP log record lands in s3://relay-logs/otel/" log_in_s3 "otlp $SMOKE_ID"
+  check "the pod's stdout (filelog) lands in s3://relay-logs/otel/" log_in_s3 "stdout $SMOKE_ID"
+  kc -n observability delete pod "$SMOKE_POD" --wait=false >/dev/null
+fi
 
 if [ "$failures" -gt 0 ]; then die "$failures smoke check(s) failed"; fi
 log "all smoke checks passed"

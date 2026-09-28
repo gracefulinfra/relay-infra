@@ -1,0 +1,70 @@
+# Dashboards: Grafana with exactly two datasources, Prometheus and Tempo, and no bundled dashboards.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: grafana
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-30"
+spec:
+  project: platform
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  source:
+    repoURL: https://grafana-community.github.io/helm-charts
+    chart: grafana
+    targetRevision: 13.2.6 # Grafana 13.2.2
+    helm:
+      releaseName: grafana
+      valuesObject:
+        fullnameOverride: grafana
+        testFramework: {enabled: false}
+        admin:
+          existingSecret: grafana-admin
+          userKey: admin-user
+          passwordKey: admin-password
+        # Routed through the Gateway (httproute.yaml) for local use; P1-19 adds SSO.
+        grafana.ini:
+          server:
+            root_url: https://grafana.relay.example.invalid
+          analytics: {reporting_enabled: false, check_for_updates: false, check_for_plugin_updates: false}
+          auth.anonymous: {enabled: false}
+          # Alerting belongs to Prometheus rules and P1-18, not Grafana.
+          unified_alerting: {enabled: false}
+        datasources:
+          datasources.yaml:
+            apiVersion: 1
+            datasources:
+              - name: Prometheus
+                uid: prometheus
+                type: prometheus
+                access: proxy
+                url: http://prometheus-server.observability.svc
+                isDefault: true
+              - name: Tempo
+                uid: tempo
+                type: tempo
+                access: proxy
+                url: http://tempo.observability.svc:3200
+                jsonData:
+                  serviceMap: {datasourceUid: prometheus}
+        persistence: {enabled: false}
+        # Grafana 13 needs about 300 Mi to start. At 256 Mi its GC thrashed and it never listened before
+        # the liveness probe killed it. GOMEMLIMIT keeps the heap under the limit.
+        env:
+          GOMEMLIMIT: 340MiB
+        resources:
+          requests: {cpu: 20m, memory: 160Mi}
+          limits: {memory: 400Mi}
+        livenessProbe:
+          httpGet: {path: /api/health, port: grafana}
+          initialDelaySeconds: 120
+          timeoutSeconds: 30
+          failureThreshold: 10
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true

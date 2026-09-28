@@ -86,3 +86,13 @@ metadata:
   name: relay-media
   annotations:
     argocd.argoproj.io/sync-wave: "-100"
+---
+# Metrics, traces, dashboards, and the telemetry collector. Grafana is routed through the Gateway.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observability
+  labels:
+    relay.dev/gateway-access: "true"
+  annotations:
+    argocd.argoproj.io/sync-wave: "-100"

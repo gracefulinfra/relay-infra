@@ -24,8 +24,9 @@ Then open:
 | <https://argocd.relay.localtest.me> | Argo CD | `admin`, password from `make argocd-password` |
 | <https://auth.relay.localtest.me/realms/relay-staff/account/> | Keycloak staff realm (TOTP required) | `make keycloak-test-users` prints the user, password, and TOTP enrolment URI |
 | <https://auth.relay.localtest.me/admin/> | Keycloak admin console | `relay-secret-source/keycloak-admin` |
+| <https://grafana.relay.localtest.me> | Grafana (Prometheus metrics, Tempo traces) | `relay-secret-source/grafana-admin` |
 
-Internal services (PostgreSQL, SeaweedFS S3, the Argo Workflows UI) are not routed: use `kubectl port-forward`.
+Internal services (PostgreSQL, SeaweedFS S3, Prometheus, Tempo, the Argo Workflows UI) are not routed: use `kubectl port-forward`.
 `*.relay.localtest.me` resolves to 127.0.0.1 in public DNS, so there is nothing to add to `/etc/hosts`.
 
 ### Prerequisites
