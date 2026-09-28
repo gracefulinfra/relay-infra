@@ -7,13 +7,23 @@
 set -euo pipefail
 # shellcheck source=scripts/lib.sh
 source "$(dirname "$0")/lib.sh"
-require kubectl curl openssl jq od
+#
+# Against the Compose dev stack instead of k3d: KEYCLOAK_URL=http://localhost:18180 and
+# KEYCLOAK_USERS_ENV=$RELAY_HOME/dev/.env (scripts/dev-smoke.sh sets both).
+require curl openssl jq od
+[ -n "${KEYCLOAK_USERS_ENV:-}" ] || require kubectl
 
 DOMAIN=${DOMAIN:?envs/$RELAY_ENV/env.sh sets no DOMAIN}
-BASE="https://auth.$DOMAIN"
+BASE=${KEYCLOAK_URL:-https://auth.$DOMAIN}
 CA_CERT=${CA_CERT:-$CA_DIR/relay-local-ca.crt}
 
+# secret_field <staff_username|staff_password|...>: from the k3d secret source, or from the dev .env
+# (RELAY_STAFF_USERNAME, ...).
 secret_field() {
+  if [ -n "${KEYCLOAK_USERS_ENV:-}" ]; then
+    sed -n "s/^RELAY_$(tr '[:lower:]' '[:upper:]' <<<"$1")=//p" "$KEYCLOAK_USERS_ENV"
+    return
+  fi
   kc -n relay-secret-source get secret keycloak-test-users -o jsonpath="{.data.$1}" | openssl base64 -d -A
 }
 
@@ -52,7 +62,8 @@ login() {
   jar=$(mktemp)
   # shellcheck disable=SC2064
   trap "rm -f '$jar'" RETURN
-  local c=(curl -sS --cacert "$CA_CERT" -b "$jar" -c "$jar" --max-time 15)
+  local c=(curl -sS -b "$jar" -c "$jar" --max-time 15)
+  [ -f "$CA_CERT" ] && c+=(--cacert "$CA_CERT")
   verifier=$(openssl rand -hex 32)
   challenge=$(printf '%s' "$verifier" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')
   redirect="$BASE/realms/relay-staff/account/"

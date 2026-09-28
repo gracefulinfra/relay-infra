@@ -101,6 +101,28 @@ seaweedfs_iam_config() {
   done | jq -cs '{identities: .}'
 }
 
+# SeaweedFS reads its IAM config and TLS key pair from files. Bind-mounting mode-600 host files fails
+# on Linux, because the image's entrypoint drops to its own `seaweed` user, which does not own them
+# (Docker Desktop on macOS hides this). So they travel base64-encoded in an env file, which the Docker
+# CLI reads as the calling user, and SEAWEEDFS_ENTRYPOINT writes them to /run/relay-s3 inside the
+# container, owned by `seaweed`, before running the image's own entrypoint.
+# shellcheck disable=SC2016,SC2034 # expanded by the container's shell; used by external-s3.sh
+SEAWEEDFS_ENTRYPOINT='umask 077 && mkdir -p /run/relay-s3 &&
+  for f in s3.json:RELAY_S3_CONFIG_B64 tls.crt:RELAY_S3_TLS_CRT_B64 tls.key:RELAY_S3_TLS_KEY_B64; do
+    eval "v=\${${f#*:}:-}"; [ -z "$v" ] || printf "%s" "$v" | base64 -d >"/run/relay-s3/${f%%:*}";
+  done && chown -R seaweed:seaweed /run/relay-s3 && exec /entrypoint.sh "$@"'
+
+# seaweedfs_env_file <file> <s3.json> [tls.crt tls.key]: writes the env file SEAWEEDFS_ENTRYPOINT reads.
+seaweedfs_env_file() {
+  local out=$1
+  (
+    umask 077
+    printf 'RELAY_S3_CONFIG_B64=%s\n' "$(base64 <"$2" | tr -d '\n')"
+    [ -z "${3:-}" ] || printf 'RELAY_S3_TLS_CRT_B64=%s\nRELAY_S3_TLS_KEY_B64=%s\n' \
+      "$(base64 <"$3" | tr -d '\n')" "$(base64 <"$4" | tr -d '\n')"
+  ) >"$out"
+}
+
 # S3 access for rclone, configured only through RCLONE_CONFIG_<REMOTE>_* variables (no rclone config
 # file, so no credentials on disk). Everything comes from envs/<env>/env.sh and the env's secrets.
 #

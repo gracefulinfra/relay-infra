@@ -77,20 +77,23 @@ up() {
     docker network create --subnet "$EXTERNAL_S3_SUBNET" --ip-range "$EXTERNAL_S3_IP_RANGE" "$EXTERNAL_S3_NETWORK" >/dev/null
     log "created Docker network $EXTERNAL_S3_NETWORK ($EXTERNAL_S3_SUBNET)"
   fi
-  if [ -z "$(docker ps -aq -f "name=^${EXTERNAL_S3_NAME}$")" ]; then
-    log "starting $SEAWEEDFS_IMAGE as $EXTERNAL_S3_NAME ($EXTERNAL_S3_IP:$port, host $S3_ENDPOINT)"
-    docker run -d --name "$EXTERNAL_S3_NAME" --restart unless-stopped \
-      --network "$EXTERNAL_S3_NETWORK" --ip "$EXTERNAL_S3_IP" \
-      -p "127.0.0.1:$EXTERNAL_S3_HOST_PORT:$port" \
-      -v "$volume:/data" -v "$S3_STATE_DIR:/etc/relay-s3:ro" \
-      "$SEAWEEDFS_IMAGE" mini -dir=/data -ip="$EXTERNAL_S3_IP" -master.telemetry=false -admin.ui=false \
-      -s3.config=/etc/relay-s3/s3.json -s3.port.https="$port" \
-      -s3.cert.file=/etc/relay-s3/tls.crt -s3.key.file=/etc/relay-s3/tls.key >/dev/null
-  else
-    docker start "$EXTERNAL_S3_NAME" >/dev/null
-    # Credentials may have been regenerated since the container started.
-    docker restart "$EXTERNAL_S3_NAME" >/dev/null
-  fi
+  # Always (re)create the container: its credentials and certificate are fixed at creation, and may
+  # have been regenerated since. The data is in the named volume, so it survives.
+  docker rm -f "$EXTERNAL_S3_NAME" >/dev/null 2>&1 || true
+  local envfile
+  envfile=$(mktemp)
+  # shellcheck disable=SC2064
+  trap "rm -f '$envfile'" RETURN
+  seaweedfs_env_file "$envfile" "$S3_STATE_DIR/s3.json" "$S3_STATE_DIR/tls.crt" "$S3_STATE_DIR/tls.key"
+  log "starting $SEAWEEDFS_IMAGE as $EXTERNAL_S3_NAME ($EXTERNAL_S3_IP:$port, host $S3_ENDPOINT)"
+  docker run -d --name "$EXTERNAL_S3_NAME" --restart unless-stopped \
+    --network "$EXTERNAL_S3_NETWORK" --ip "$EXTERNAL_S3_IP" \
+    -p "127.0.0.1:$EXTERNAL_S3_HOST_PORT:$port" \
+    -v "$volume:/data" --env-file "$envfile" \
+    --entrypoint /bin/sh "$SEAWEEDFS_IMAGE" -c "$SEAWEEDFS_ENTRYPOINT" -- \
+    mini -dir=/data -ip="$EXTERNAL_S3_IP" -master.telemetry=false -admin.ui=false \
+    -s3.config=/run/relay-s3/s3.json -s3.port.https="$port" \
+    -s3.cert.file=/run/relay-s3/tls.crt -s3.key.file=/run/relay-s3/tls.key >/dev/null
   wait_tls
   local b
   s3_open s3 "$RELAY_ENV"

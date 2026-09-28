@@ -9,7 +9,7 @@ GOLANGCI_LINT_VERSION ?= 2.14.0
 # The S3 conformance target in Docker. Keep the tag equal to the chart in platform/seaweedfs (scripts/s3-conformance.sh checks).
 SEAWEEDFS_IMAGE ?= docker.io/chrislusf/seaweedfs:4.47@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882
 
-.PHONY: help up down stop dev sync smoke wait secrets argocd-password keycloak-test-users test lint vuln conformance-s3 conformance-s3-cluster conformance-s3-external portability portability-report portability-down build image
+.PHONY: help up down stop dev dev-smoke dev-env dev-down dev-users sync smoke wait secrets argocd-password keycloak-test-users test lint vuln conformance-s3 conformance-s3-cluster conformance-s3-external portability portability-report portability-down build image
 
 # Environment for up/down/stop/smoke/...: an overlay in envs/ with an env.sh (local, local-b).
 RELAY_ENV ?= local
@@ -27,7 +27,20 @@ down: ## Delete the k3d cluster and registry (keeps the local CA in ~/.relay-loc
 stop: ## Stop the cluster but keep it (the next `make up` is a cached start)
 	k3d cluster stop "$$(bash -c 'source scripts/lib.sh && echo $$CLUSTER_NAME')"
 
-dev: up ## Alias for `make up`
+dev: ## Compose dev stack: PostgreSQL, S3, Keycloak (PROFILE=observability adds OTel, Tempo, Prometheus, Grafana)
+	scripts/dev.sh up $(PROFILE)
+
+dev-smoke: ## Check the Compose dev stack
+	scripts/dev-smoke.sh
+
+dev-env: ## Print the dev stack's connection settings, with its local credentials
+	@scripts/dev.sh env
+
+dev-down: ## Stop the Compose dev stack (keeps its data; `scripts/dev.sh destroy` removes it)
+	scripts/dev.sh down
+
+dev-users: ## Print the dev stack's Keycloak test users and the staff TOTP enrolment URI
+	@KEYCLOAK_URL=http://localhost:18180 KEYCLOAK_USERS_ENV="$${RELAY_HOME:-$$HOME/.relay-local}/dev/.env" scripts/keycloak.sh test-users
 
 sync: ## LOCAL_GIT=1 only: push a working-tree snapshot to the in-cluster git server and refresh Argo CD
 	scripts/local-git.sh sync

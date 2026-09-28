@@ -7,6 +7,14 @@ The build is driven by a prompt series; see the prompt index (`prompts/00-INDEX.
 workspace) and the architecture decisions in
 [relay-contracts/adr](https://github.com/gracefulinfra/relay-contracts/tree/main/adr).
 
+## Dev stack (Docker Compose)
+
+For everyday app work: `make dev` starts PostgreSQL, S3, and Keycloak (and, with
+`PROFILE=observability`, the OTel Collector, Tempo, Prometheus, and Grafana) in Docker Compose in about
+15 seconds, with the same versions, buckets, S3 identities, and realms as the platform.
+`make dev-smoke` checks it. See [docs/dev-stack.md](docs/dev-stack.md). The k3d platform below is
+still what GitOps, Argo Workflows, the portability rehearsal, and the gates run on.
+
 ## Quickstart (local k3d platform)
 
 ```bash
@@ -102,7 +110,8 @@ More detail: [docs/platform.md](docs/platform.md).
 
 | Target | What it does |
 | --- | --- |
-| `make up` / `make dev` | Create (or start) the cluster and wait until every Application is Synced/Healthy. `RELAY_ENV=<env>` picks the overlay and its `envs/<env>/env.sh` (default `local`) |
+| `make dev` / `make dev-smoke` / `make dev-down` | The Compose dev stack ([docs/dev-stack.md](docs/dev-stack.md)): start it (`PROFILE=observability` adds telemetry), check it, stop it. `make dev-env` prints its connection settings and `make dev-users` its Keycloak test users |
+| `make up` | Create (or start) the cluster and wait until every Application is Synced/Healthy. `RELAY_ENV=<env>` picks the overlay and its `envs/<env>/env.sh` (default `local`) |
 | `make smoke` | `scripts/smoke.sh`: Argo CD, secrets, TLS, Gateway, S3 privacy, CNPG health and an on-demand backup to S3, Keycloak TOTP login, and an Argo Workflow artifact |
 | `make keycloak-test-users` | Print the Keycloak test users and the staff TOTP enrolment URI |
 | `make sync` | `LOCAL_GIT=1` only: push a working-tree snapshot and refresh Argo CD |
@@ -119,11 +128,12 @@ More detail: [docs/platform.md](docs/platform.md).
 
 ## CI
 
-`.github/workflows/ci.yml` runs three jobs:
+`.github/workflows/ci.yml` runs four jobs:
 
 - `validate`: `make lint`, `make test`, and `make vuln`.
 - `s3-conformance`: `make conformance-s3`. Any hard-case failure fails the job; the report is in the job
   summary and the `s3-conformance` artifact.
+- `dev-stack`: `make dev PROFILE=observability` and `make dev-smoke` on a fresh runner.
 - `e2e`: `LOCAL_GIT=1 scripts/up.sh` and `scripts/smoke.sh` on a fresh `ubuntu-24.04` runner. This is
   the clean-machine run; the job summary records timings and per-pod memory.
 

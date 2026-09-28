@@ -72,6 +72,32 @@ jobs:
             conformance.log
           if-no-files-found: warn
 
+  # The Compose dev stack (ADR 0009) on a clean runner: make dev with the observability profile, then
+  # the dev smoke test (PostgreSQL, S3 identities and privacy, Keycloak TOTP login, OTLP paths).
+  dev-stack:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: make dev
+        shell: bash # -eo pipefail, so a failing start fails the step despite tee
+        run: |
+          make dev PROFILE=observability 2>&1 | tee dev.log
+      - name: make dev-smoke
+        shell: bash
+        run: |
+          make dev-smoke 2>&1 | tee dev-smoke.log
+          { echo "### dev stack"; echo '```'; sed 's/\x1b\[[0-9;]*m//g' dev-smoke.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Diagnostics
+        if: failure()
+        run: |
+          docker compose -f compose/compose.yaml --env-file "$HOME/.relay-local/dev/.env" --profile observability ps -a
+          docker compose -f compose/compose.yaml --env-file "$HOME/.relay-local/dev/.env" --profile observability logs --tail 80
+
   # The "clean machine" run: a fresh runner creates the k3d cluster, reconciles envs/local from this
   # commit (LOCAL_GIT=1 serves the checkout from the in-cluster git server), and runs the smoke test.
   e2e:
