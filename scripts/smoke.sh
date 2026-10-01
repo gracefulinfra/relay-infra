@@ -156,6 +156,39 @@ YAML
   }
 }
 
+# --- relay-api helpers -----------------------------------------------------------------------------------
+# api_readyz <component>: /readyz of one pod on the ops port, through the API server's pod proxy (the ops
+# port is never routed through the Gateway).
+api_readyz() {
+  local pod
+  pod=$(kc -n relay get pods -l "app.kubernetes.io/name=relay-api,app.kubernetes.io/component=$1" \
+    --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')
+  [ -n "$pod" ] || { echo "no running $1 pod" && return 1; }
+  kc get --raw "/api/v1/namespaces/relay/pods/$pod:9090/proxy/readyz" | jq -e '.status == "ok"' >/dev/null
+}
+api_problem() { # api_problem <path> <status> <code>: an RFC 9457 problem through the Gateway
+  local body
+  body=$(curl -sS --max-time 10 --cacert "$CA_CERT" -w '\n%{http_code} %{content_type}' "https://api.$DOMAIN$1")
+  if [ "$(tail -1 <<<"$body")" != "$2 application/problem+json" ] ||
+    ! head -1 <<<"$body" | jq -e --arg c "$3" '.code == $c and (.requestId | length) > 0' >/dev/null; then
+    echo "got: $(tail -1 <<<"$body")"
+    return 1
+  fi
+}
+migrate_job_succeeded() { [ "$(kc -n relay get job relay-api-migrate -o jsonpath='{.status.succeeded}')" = 1 ]; }
+api_scraped() {
+  local n
+  n=$(grafana_get "/api/datasources/proxy/uid/prometheus/api/v1/query?query=count(relay_http_requests_total)" | jq -r '.data.result[0].value[1] // 0')
+  [ "$n" -ge 1 ] || { echo "no relay_http_requests_total series in Prometheus" && return 1; }
+}
+API_TRACE_ID=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+api_traced_request() {
+  curl -sS -o /dev/null --max-time 10 --cacert "$CA_CERT" \
+    -H "traceparent: 00-$API_TRACE_ID-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')-01" "https://api.$DOMAIN/v0/public/shows"
+}
+api_trace_has_span() { grafana_get "/api/datasources/proxy/uid/tempo/api/v2/traces/$API_TRACE_ID" 2>/dev/null | grep -q 'GET /v0/public/shows'; }
+api_trace_in_tempo() { retry 90 api_trace_has_span || { echo "trace $API_TRACE_ID not found in Tempo" && return 1; }; }
+
 # --- Observability helpers -------------------------------------------------------------------------------
 # Grafana is the one routed observability UI; Prometheus and Tempo are queried through its datasource
 # proxy, so the checks also prove the datasources are wired.
@@ -313,6 +346,17 @@ if check "OTLP trace, metric, and log sent to the collector" otlp_send; then
   check "the pod's stdout (filelog) lands in s3://relay-logs/otel/" log_in_s3 "stdout $SMOKE_ID"
   kc -n observability delete pod "$SMOKE_POD" --wait=false >/dev/null
 fi
+
+log "relay-api"
+check "migration Job relay-api-migrate succeeded" migrate_job_succeeded
+check "relay-api /readyz (database, migrations)" api_readyz api
+check "relay-worker /readyz (database, migrations, River)" api_readyz worker
+check "anonymous public operation via https://api.$DOMAIN answers 501 problem+json" api_problem /v0/public/shows 501 not_implemented
+check "staff operation without credentials answers 401" api_problem /v0/me 401 unauthorized
+check "the ops port is not routed (/readyz via the Gateway is 404)" https_status api /readyz 404
+check "a traced request reaches relay-api" api_traced_request
+check "relay-api metrics are scraped by Prometheus" retry 60 api_scraped
+check "relay-api's span reaches Tempo" api_trace_in_tempo
 
 if [ "$failures" -gt 0 ]; then die "$failures smoke check(s) failed"; fi
 log "all smoke checks passed"

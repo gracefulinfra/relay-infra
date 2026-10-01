@@ -1,0 +1,90 @@
+# Defaults are provider-neutral and sized for the laptop profile. Environments override them through the
+# Application's helm.valuesObject in envs/<env> (see envs/README.md, "relay-api").
+
+image:
+  repository: ghcr.io/gracefulinfra/relay-api
+  # Required. The sha256 digest of an image built and signed by relay-api CI on main. Never a tag.
+  digest: ""
+  pullPolicy: IfNotPresent
+
+# The GHCR pull secret, synced into namespaces labelled relay.dev/ghcr-pull=true (ADR 0004).
+imagePullSecrets:
+  - name: ghcr-pull
+
+# The public API hostname, on the shared Gateway.
+hostname: api.relay.example.invalid
+gateway:
+  name: relay
+  namespace: relay-gateway
+  sectionName: https
+
+# Browser origins allowed by CORS (the admin app). Empty turns CORS off.
+corsAllowedOrigins: []
+
+logLevel: info
+
+database:
+  # The CNPG cluster's app-user Secret, copied from its namespace by External Secrets.
+  namespace: relay-db
+  secretName: relay-app
+  # Read-write service of the CNPG cluster.
+  host: relay-rw.relay-db.svc
+  port: 5432
+  sslmode: require
+  maxConns: 10
+
+otel:
+  endpoint: http://otel-collector.observability.svc:4317
+
+api:
+  replicas: 1
+  resources:
+    # CPU request sized so the HPA target (75%) is above idle noise from probes and scrapes.
+    requests: {cpu: 50m, memory: 48Mi}
+    limits: {memory: 256Mi}
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 75
+  # PDB: with one replica maxUnavailable 1 never blocks a drain; it starts protecting availability
+  # as soon as the HPA runs two.
+  pdb:
+    maxUnavailable: 1
+
+worker:
+  replicas: 1
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {memory: 192Mi}
+
+migrate:
+  backoffLimit: 2
+  activeDeadlineSeconds: 300
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {memory: 128Mi}
+
+# Egress is denied except to these peers (plus cluster DNS). Each entry is a NetworkPolicy egress rule.
+networkPolicy:
+  postgres:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: relay-db}}
+          podSelector: {matchLabels: {cnpg.io/cluster: relay}}
+      ports: [{port: 5432, protocol: TCP}]
+  # In-cluster SeaweedFS by default; an environment with external S3 replaces this (ipBlock or FQDN egress).
+  s3:
+    - to: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: seaweedfs}}}]
+      ports: [{port: 8333, protocol: TCP}]
+  keycloak:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: keycloak}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: keycloak}}
+      ports: [{port: 8080, protocol: TCP}]
+  otel:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: observability}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: opentelemetry-collector}}
+      ports: [{port: 4317, protocol: TCP}, {port: 4318, protocol: TCP}]
+  # Who may reach the API port: the Gateway's Envoy only.
+  gatewayNamespace: envoy-gateway-system

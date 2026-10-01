@@ -1,0 +1,7 @@
+# Relay's own applications. Each is an Argo CD Application over a chart in this directory; the charts
+# are provider-neutral and each environment patches its values (envs/README.md, "App knobs").
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - project.yaml
+  - relay-api.application.yaml

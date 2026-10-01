@@ -1,0 +1,34 @@
+# The migration Job: an Argo CD Sync hook in wave -1, so on every sync (first install and upgrade) it
+# runs after its configuration exists (wave -2) and before the Deployments roll (wave 0). If it fails,
+# the sync fails and the running release keeps serving on the last good schema (runbook: relay-api
+# docs/runbook.md). Migrations are expand/contract, so the old pods stay compatible while it runs.
+# BeforeHookCreation keeps the last Job and its logs until the next sync replaces it.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: relay-api-migrate
+  labels: {{- include "relay-api.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  backoffLimit: {{ .Values.migrate.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migrate.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels: {{- include "relay-api.selector" "migrate" | nindent 8 }}
+    spec:
+      {{- include "relay-api.podSpec" . | nindent 6 }}
+      serviceAccountName: relay-api-migrate
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: {{ include "relay-api.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [/relay-migrate, up]
+          {{- include "relay-api.env" . | nindent 10 }}
+          env:
+            {{- include "relay-api.gomemlimit" .Values.migrate.resources | nindent 12 }}
+          resources: {{- toYaml .Values.migrate.resources | nindent 12 }}
+          {{- include "relay-api.containerSecurity" . | nindent 10 }}

@@ -9,7 +9,7 @@
 # config; `external` copies the identities and CA of the external endpoint (scripts/external-s3.sh).
 #
 # Optional input:
-#   GHCR_TOKEN   a GitHub token with read:packages; creates the ghcr-pull source secret (ADR-0004).
+#   GHCR_TOKEN   a GitHub token with read:packages; creates the ghcr-pull source secret (ADR-0004). Required.
 #   RELAY_SECRETS_BUNDLE  an age-encrypted bundle written by scripts/portability/export.sh. Its Secrets
 #                are imported first and replace existing ones, so carried values win over generated ones.
 #   RELAY_AGE_KEY  the age identity that decrypts the bundle (default $RELAY_HOME/portability/age.key).
@@ -111,11 +111,13 @@ put_literal keycloak-test-users \
 # --- Grafana -----------------------------------------------------------------------------------------
 put_literal grafana-admin "admin-user=relay-admin" "admin-password=$(rand 32)"
 
-# --- GHCR pull secret (optional) ---------------------------------------------------------------------
+# --- GHCR pull secret ---------------------------------------------------------------------------------
+# Required since P1-01: relay-api's image is private (ADR 0004). Any token with read:packages works, for
+# example `gh auth refresh -s read:packages` then GHCR_TOKEN=$(gh auth token). CI uses GITHUB_TOKEN.
 if [ -n "${GHCR_TOKEN:-}" ] && ! exists ghcr-pull; then
   kc -n "$NS" create secret docker-registry ghcr-pull --docker-server=ghcr.io \
     --docker-username="${GHCR_USER:-relay}" --docker-password="$GHCR_TOKEN" >/dev/null
   log "created secret $NS/ghcr-pull"
 elif ! exists ghcr-pull; then
-  log "skipped ghcr-pull: set GHCR_TOKEN (read:packages) to pull private relay images"
+  die "GHCR_TOKEN is not set: relay-api's image is private. Run \`gh auth refresh -s read:packages\`, then GHCR_TOKEN=\$(gh auth token) make up"
 fi

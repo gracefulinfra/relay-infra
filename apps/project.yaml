@@ -1,0 +1,19 @@
+# The AppProject for Relay's own applications: charts from this repository only, namespaced resources
+# only, in the `relay` namespace only. (The platform project stays broad until P1-19.)
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: apps
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-100"
+spec:
+  description: Relay applications
+  sourceRepos:
+    - https://github.com/gracefulinfra/relay-infra.git
+    # LOCAL_GIT=1 (scripts/local-git.sh): the working tree served in-cluster.
+    - http://git-server.relay-git.svc.cluster.local/relay-infra.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: relay
+  clusterResourceWhitelist: []

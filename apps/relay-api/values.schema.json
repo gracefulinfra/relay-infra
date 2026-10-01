@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "relay-api chart values",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["image", "hostname", "gateway", "database", "otel", "api", "worker", "migrate", "networkPolicy"],
+  "$defs": {
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requests", "limits"],
+      "properties": {
+        "requests": {
+          "type": "object",
+          "required": ["cpu", "memory"],
+          "properties": {"cpu": {"type": "string"}, "memory": {"type": "string", "pattern": "^[0-9]+Mi$"}}
+        },
+        "limits": {
+          "type": "object",
+          "required": ["memory"],
+          "properties": {"cpu": {"type": "string"}, "memory": {"type": "string", "pattern": "^[0-9]+Mi$"}}
+        }
+      }
+    },
+    "egressRules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["to", "ports"],
+        "properties": {"to": {"type": "array", "minItems": 1}, "ports": {"type": "array", "minItems": 1}}
+      }
+    }
+  },
+  "properties": {
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "digest"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "digest": {"type": "string", "pattern": "^(sha256:[a-f0-9]{64})?$"},
+        "pullPolicy": {"enum": ["IfNotPresent", "Always"]}
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}}}
+    },
+    "hostname": {"type": "string", "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"},
+    "gateway": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "namespace", "sectionName"],
+      "properties": {"name": {"type": "string"}, "namespace": {"type": "string"}, "sectionName": {"type": "string"}}
+    },
+    "corsAllowedOrigins": {"type": "array", "items": {"type": "string", "pattern": "^https?://[^/*]+$"}},
+    "logLevel": {"enum": ["debug", "info", "warn", "error"]},
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["namespace", "secretName", "host", "port", "sslmode", "maxConns"],
+      "properties": {
+        "namespace": {"type": "string"},
+        "secretName": {"type": "string"},
+        "host": {"type": "string"},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "sslmode": {"enum": ["require", "verify-ca", "verify-full"]},
+        "maxConns": {"type": "integer", "minimum": 2}
+      }
+    },
+    "otel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["endpoint"],
+      "properties": {"endpoint": {"type": "string", "pattern": "^https?://"}}
+    },
+    "api": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["replicas", "resources", "autoscaling", "pdb"],
+      "properties": {
+        "replicas": {"type": "integer", "minimum": 1},
+        "resources": {"$ref": "#/$defs/resources"},
+        "autoscaling": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "minReplicas", "maxReplicas", "targetCPUUtilizationPercentage"],
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "minReplicas": {"type": "integer", "minimum": 1},
+            "maxReplicas": {"type": "integer", "minimum": 1},
+            "targetCPUUtilizationPercentage": {"type": "integer", "minimum": 10, "maximum": 100}
+          }
+        },
+        "pdb": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["maxUnavailable"],
+          "properties": {"maxUnavailable": {"type": ["integer", "string"]}}
+        }
+      }
+    },
+    "worker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["replicas", "resources"],
+      "properties": {"replicas": {"type": "integer", "minimum": 0}, "resources": {"$ref": "#/$defs/resources"}}
+    },
+    "migrate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["backoffLimit", "activeDeadlineSeconds", "resources"],
+      "properties": {
+        "backoffLimit": {"type": "integer", "minimum": 0},
+        "activeDeadlineSeconds": {"type": "integer", "minimum": 30},
+        "resources": {"$ref": "#/$defs/resources"}
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["postgres", "s3", "keycloak", "otel", "gatewayNamespace"],
+      "properties": {
+        "postgres": {"$ref": "#/$defs/egressRules"},
+        "s3": {"$ref": "#/$defs/egressRules"},
+        "keycloak": {"$ref": "#/$defs/egressRules"},
+        "otel": {"$ref": "#/$defs/egressRules"},
+        "gatewayNamespace": {"type": "string"}
+      }
+    }
+  }
+}

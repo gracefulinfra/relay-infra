@@ -105,6 +105,7 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
+      packages: read # pull the private relay-api image (ADR 0004)
     env:
       # renovate: datasource=github-releases depName=k3d-io/k3d
       K3D_VERSION: v5.9.0
@@ -137,6 +138,11 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: make up
+        env:
+          # relay-api's image is private: GITHUB_TOKEN reads it once the package grants this repository
+          # read access (relay-api package settings, "Manage Actions access").
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
         shell: bash # -eo pipefail, so a failing make up fails the step despite tee
         run: |
           # The CI identity commits the snapshot pushed to the in-cluster git server.

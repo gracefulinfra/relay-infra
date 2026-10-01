@@ -96,3 +96,14 @@ metadata:
     relay.dev/gateway-access: "true"
   annotations:
     argocd.argoproj.io/sync-wave: "-100"
+---
+# Relay's own applications (relay-api from P1-01). Routed through the Gateway, and pulls private GHCR images.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: relay
+  labels:
+    relay.dev/gateway-access: "true"
+    relay.dev/ghcr-pull: "true"
+  annotations:
+    argocd.argoproj.io/sync-wave: "-100"
