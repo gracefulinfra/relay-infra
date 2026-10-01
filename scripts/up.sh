@@ -99,7 +99,7 @@ log "applying relay-root -> $REPO_URL@$REVISION envs/$RELAY_ENV"
 root_app=$(envsubst '${REPO_URL} ${REVISION} ${RELAY_ENV}' <"$REPO_ROOT/bootstrap/root-app.yaml")
 if [ -n "${ROOT_APP_PATCHES:-}" ]; then
   log "relay-root carries run-time Kustomize patches from $ROOT_APP_PATCHES"
-  root_app=$(PATCHES="$ROOT_APP_PATCHES" yq '.spec.source.kustomize.patches = load(strenv(PATCHES))' <<<"$root_app")
+  root_app=$(PATCHES="$ROOT_APP_PATCHES" yq '.spec.source.kustomize.patches += load(strenv(PATCHES))' <<<"$root_app")
 fi
 kc apply -f - <<<"$root_app" >/dev/null
 

@@ -1,0 +1,72 @@
+# Non-secret configuration, and the database URL assembled from the CNPG app-user Secret.
+# Wave -2: everything the migration Job (wave -1) and the Deployments (wave 0) read.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: relay-api-config
+  labels: {{- include "relay-api.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+data:
+  RELAY_LOG_LEVEL: {{ .Values.logLevel | quote }}
+  RELAY_DB_MAX_CONNS: {{ .Values.database.maxConns | quote }}
+  RELAY_CORS_ALLOWED_ORIGINS: {{ join "," .Values.corsAllowedOrigins | quote }}
+  OTEL_TRACES_EXPORTER: otlp
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.otel.endpoint | quote }}
+  OTEL_EXPORTER_OTLP_INSECURE: "true"
+---
+# The identity External Secrets uses to read the CNPG Secret in the database namespace. The Role that
+# lets it read exactly that Secret lives with the database (platform/postgres/app-access.yaml).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: relay-db-credentials
+  labels: {{- include "relay-api.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+automountServiceAccountToken: false
+---
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: relay-db
+  labels: {{- include "relay-api.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+spec:
+  provider:
+    kubernetes:
+      remoteNamespace: {{ .Values.database.namespace }}
+      server:
+        url: https://kubernetes.default.svc
+        caProvider:
+          type: ConfigMap
+          name: kube-root-ca.crt
+          key: ca.crt
+      auth:
+        serviceAccount:
+          name: relay-db-credentials
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: relay-api-db
+  labels: {{- include "relay-api.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: SecretStore
+    name: relay-db
+  target:
+    name: relay-api-db
+    template:
+      engineVersion: v2
+      data:
+        RELAY_DATABASE_URL: >-
+          postgres://{{`{{ .username | urlquery }}`}}:{{`{{ .password | urlquery }}`}}@{{ .Values.database.host }}:{{ .Values.database.port }}/{{`{{ .dbname }}`}}?sslmode={{ .Values.database.sslmode }}
+  data:
+    - {secretKey: username, remoteRef: {key: {{ .Values.database.secretName }}, property: username}}
+    - {secretKey: password, remoteRef: {key: {{ .Values.database.secretName }}, property: password}}
+    - {secretKey: dbname, remoteRef: {key: {{ .Values.database.secretName }}, property: dbname}}

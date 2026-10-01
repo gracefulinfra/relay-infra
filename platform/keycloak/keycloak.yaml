@@ -109,8 +109,9 @@ spec:
     - backendRefs:
         - {name: keycloak, port: 8080}
 ---
-# Only the Gateway's Envoy reaches the HTTP port. The management port (health, metrics) is for the
-# kubelet and in-cluster scrapers only and is never routed.
+# The HTTP port is reached by the Gateway's Envoy, and by relay-api directly (OIDC discovery and JWKS,
+# P1-02). The management port (health, metrics) is for the kubelet and in-cluster scrapers only and is
+# never routed.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -126,5 +127,9 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels: {kubernetes.io/metadata.name: envoy-gateway-system}
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: relay}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: relay-api, app.kubernetes.io/component: api}
       ports: [{port: 8080}]
     - ports: [{port: 9000}]

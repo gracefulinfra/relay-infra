@@ -1,0 +1,40 @@
+# Default deny for every relay-api workload, then one allow-list per workload.
+#   api:     ingress 8080 from the Gateway only; egress to Postgres, S3, Keycloak, the OTel collector.
+#   worker:  no API ingress; egress to Postgres, S3, the OTel collector. (P1-05 adds the Kubernetes API
+#            for the Argo Workflows bridge here, never on the API.)
+#   migrate: egress to Postgres and the OTel collector only.
+# Every workload: the ops port 9090 is reachable in-cluster (kubelet probes, Prometheus) and never routed;
+# DNS to the cluster resolver.
+{{- $np := .Values.networkPolicy }}
+{{- $dns := dict "to" (list (dict "namespaceSelector" (dict "matchLabels" (dict "kubernetes.io/metadata.name" "kube-system")) "podSelector" (dict "matchLabels" (dict "k8s-app" "kube-dns")))) "ports" (list (dict "port" 53 "protocol" "UDP") (dict "port" 53 "protocol" "TCP")) }}
+{{- $egress := dict
+  "api" (concat (list $dns) $np.postgres $np.s3 $np.keycloak $np.otel)
+  "worker" (concat (list $dns) $np.postgres $np.s3 $np.otel)
+  "migrate" (concat (list $dns) $np.postgres $np.otel) }}
+{{- range $c := list "api" "worker" "migrate" }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: relay-api-{{ $c }}
+  labels: {{- include "relay-api.labels" $ | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  podSelector:
+    matchLabels: {{- include "relay-api.selector" $c | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  {{- if eq $c "migrate" }}
+  ingress: []
+  {{- else }}
+  ingress:
+    {{- if eq $c "api" }}
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: {{ $np.gatewayNamespace }}}
+      ports: [{port: 8080, protocol: TCP}]
+    {{- end }}
+    - ports: [{port: 9090, protocol: TCP}]
+  {{- end }}
+  egress: {{- toYaml (get $egress $c) | nindent 4 }}
+{{- end }}

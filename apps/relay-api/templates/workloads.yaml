@@ -1,0 +1,142 @@
+# One ServiceAccount per workload: the HTTP API, the River worker (the dispatcher; P1-05 gives it the
+# Kubernetes RBAC and API-server egress for Argo Workflows, which the API never gets), and the migrator.
+# None of them mounts a token today.
+{{- range $c := list "api" "worker" "migrate" }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: relay-api-{{ $c }}
+  labels: {{- include "relay-api.labels" $ | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+automountServiceAccountToken: false
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: relay-api
+  labels: {{- include "relay-api.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.api.autoscaling.enabled }}
+  replicas: {{ .Values.api.replicas }}
+  {{- end }}
+  revisionHistoryLimit: 3
+  strategy:
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  selector:
+    matchLabels: {{- include "relay-api.selector" "api" | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "relay-api.selector" "api" | nindent 8 }}
+      annotations:
+        {{- include "relay-api.scrape" . | nindent 8 }}
+        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum }}
+    spec:
+      {{- include "relay-api.podSpec" . | nindent 6 }}
+      serviceAccountName: relay-api-api
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: api
+          image: {{ include "relay-api.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [/relay-api]
+          {{- include "relay-api.env" . | nindent 10 }}
+          env:
+            {{- include "relay-api.gomemlimit" .Values.api.resources | nindent 12 }}
+          ports:
+            - {name: http, containerPort: 8080}
+            - {name: ops, containerPort: 9090}
+          {{- include "relay-api.opsProbes" . | nindent 10 }}
+          resources: {{- toYaml .Values.api.resources | nindent 12 }}
+          {{- include "relay-api.containerSecurity" . | nindent 10 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: relay-worker
+  labels: {{- include "relay-api.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels: {{- include "relay-api.selector" "worker" | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "relay-api.selector" "worker" | nindent 8 }}
+      annotations:
+        {{- include "relay-api.scrape" . | nindent 8 }}
+        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum }}
+    spec:
+      {{- include "relay-api.podSpec" . | nindent 6 }}
+      serviceAccountName: relay-api-worker
+      # River finishes running jobs on SIGTERM (RELAY_SHUTDOWN_TIMEOUT, 20s by default).
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: worker
+          image: {{ include "relay-api.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [/relay-worker]
+          {{- include "relay-api.env" . | nindent 10 }}
+          env:
+            {{- include "relay-api.gomemlimit" .Values.worker.resources | nindent 12 }}
+          ports:
+            - {name: ops, containerPort: 9090}
+          {{- include "relay-api.opsProbes" . | nindent 10 }}
+          resources: {{- toYaml .Values.worker.resources | nindent 12 }}
+          {{- include "relay-api.containerSecurity" . | nindent 10 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: relay-api
+  labels: {{- include "relay-api.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "relay-api.selector" "api" | nindent 4 }}
+  ports:
+    - {name: http, port: 8080, targetPort: http}
+{{- if .Values.api.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: relay-api
+  labels: {{- include "relay-api.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: relay-api}
+  minReplicas: {{ .Values.api.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.api.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: {type: Utilization, averageUtilization: {{ .Values.api.autoscaling.targetCPUUtilizationPercentage }}}
+{{- end }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: relay-api
+  labels: {{- include "relay-api.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: {{ .Values.api.pdb.maxUnavailable }}
+  selector:
+    matchLabels: {{- include "relay-api.selector" "api" | nindent 6 }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: relay-api
+  labels: {{- include "relay-api.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - {name: {{ .Values.gateway.name }}, namespace: {{ .Values.gateway.namespace }}, sectionName: {{ .Values.gateway.sectionName }}}
+  hostnames:
+    - {{ .Values.hostname }}
+  rules:
+    # Only the versioned API is routed. The ops port (health, readiness, metrics) never is.
+    - matches:
+        - path: {type: PathPrefix, value: /v0/}
+      backendRefs:
+        - {name: relay-api, port: 8080}

@@ -1,0 +1,35 @@
+# relay-api reads its database credentials (the CNPG app-user Secret `relay-app`) through External
+# Secrets: a SecretStore in the `relay` namespace authenticates as relay/relay-db-credentials, which may
+# read that one Secret here and nothing else (apps/relay-api/templates/config.yaml).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: relay-api-db-credentials
+  namespace: relay-db
+  annotations:
+    argocd.argoproj.io/sync-wave: "-40"
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [relay-app]
+    verbs: [get]
+  # ESO validates a store by asking what it may do.
+  - apiGroups: [authorization.k8s.io]
+    resources: [selfsubjectrulesreviews]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: relay-api-db-credentials
+  namespace: relay-db
+  annotations:
+    argocd.argoproj.io/sync-wave: "-40"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: relay-api-db-credentials
+subjects:
+  - kind: ServiceAccount
+    name: relay-db-credentials
+    namespace: relay

@@ -20,7 +20,9 @@ still what GitOps, Argo Workflows, the portability rehearsal, and the gates run 
 ```bash
 git clone https://github.com/gracefulinfra/relay-infra.git
 cd relay-infra
-make up        # k3d cluster + Argo CD + every platform service, reconciled from envs/local
+gh auth refresh -s read:packages            # once: relay-api's image is private (ADR-0004)
+export GHCR_TOKEN=$(gh auth token)
+make up        # k3d cluster + Argo CD + every platform service and relay-api, reconciled from envs/local
 make smoke     # health and Gateway reachability checks
 make down      # delete the cluster (the local CA in ~/.relay-local is kept)
 ```
@@ -33,6 +35,7 @@ Then open:
 | <https://auth.relay.localtest.me/realms/relay-staff/account/> | Keycloak staff realm (TOTP required) | `make keycloak-test-users` prints the user, password, and TOTP enrolment URI |
 | <https://auth.relay.localtest.me/admin/> | Keycloak admin console | `relay-secret-source/keycloak-admin` |
 | <https://grafana.relay.localtest.me> | Grafana (Prometheus metrics, Tempo traces) | `relay-secret-source/grafana-admin` |
+| <https://api.relay.localtest.me/v0/public/shows> | relay-api (`/v0` only; ops endpoints are not routed) | anonymous for `/v0/public`; staff auth arrives in P1-02 |
 
 Internal services (PostgreSQL, SeaweedFS S3, Prometheus, Tempo, the Argo Workflows UI) are not routed: use `kubectl port-forward`.
 `*.relay.localtest.me` resolves to 127.0.0.1 in public DNS, so there is nothing to add to `/etc/hosts`.
@@ -83,7 +86,7 @@ limited to `pathlen:0` and exists only on your machine. To remove it, delete it 
 bootstrap/     k3d config, the relay-root app-of-apps template, the LOCAL_GIT git server
 platform/      one directory per platform service: an Argo CD Application (Helm chart + valuesObject)
                plus the provider-neutral manifests that configure it
-apps/          Relay app charts (from P1-01)
+apps/          Relay app charts and their Argo CD Applications (relay-api from P1-01; see docs/apps.md)
 envs/          Kustomize overlays plus env.sh script settings: local (k3d), local-b (the portability
                rehearsal target), provider-a and provider-b (compile-only stubs)
 conformance/   test suites a storage or cluster target must pass before Relay uses it (s3/: P0-06)
@@ -101,8 +104,8 @@ How it fits together:
    lists every knob.
 4. Secrets: [ADR-0007](https://github.com/gracefulinfra/relay-contracts/blob/main/adr/0007-secret-management.md).
    External Secrets Operator reads a single `ClusterSecretStore`. Locally, that store is the
-   `relay-secret-source` namespace, which `scripts/secrets.sh` fills. Set `GHCR_TOKEN` (`read:packages`)
-   before `make up` to get the `ghcr-pull` secret for private images (ADR-0004).
+   `relay-secret-source` namespace, which `scripts/secrets.sh` fills. `GHCR_TOKEN` (`read:packages`) is
+   required: it becomes the `ghcr-pull` secret for the private relay-api image (ADR-0004).
 
 More detail: [docs/platform.md](docs/platform.md).
 

@@ -11,6 +11,14 @@ spec:
     repoURL: ${REPO_URL}
     targetRevision: ${REVISION}
     path: envs/${RELAY_ENV}
+    kustomize:
+      patches:
+        # App charts that live in this repository (apps/) deploy from relay-root's own source, so a
+        # branch or LOCAL_GIT=1 working tree reaches them too. scripts/up.sh appends ROOT_APP_PATCHES.
+        - target: {kind: Application, labelSelector: relay.dev/source=relay-infra}
+          patch: |-
+            - {op: replace, path: /spec/source/repoURL, value: "${REPO_URL}"}
+            - {op: replace, path: /spec/source/targetRevision, value: "${REVISION}"}
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd

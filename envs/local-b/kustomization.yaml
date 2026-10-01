@@ -16,6 +16,7 @@ resources:
   - ../../platform/keycloak
   - ../../platform/argo-workflows
   - ../../platform/observability
+  - ../../apps
   - storage-class.yaml
   - s3-ca.yaml
   - restore.yaml
@@ -24,6 +25,18 @@ components:
   # TLS: the CA issuer over local-b's own CA ($RELAY_HOME/local-b/ca).
   - ../components/local-secrets
 patches:
+  # relay-api: its hostname, and the admin app origin allowed by CORS.
+  - target: {kind: Application, name: relay-api}
+    patch: |-
+      - {op: replace, path: /spec/source/helm/valuesObject/hostname, value: api.relay-b.localtest.me}
+      - {op: replace, path: /spec/source/helm/valuesObject/corsAllowedOrigins, value: ['https://admin.relay-b.localtest.me']}
+      # S3 is outside the cluster (env.sh EXTERNAL_S3_IP, port 8443): egress by address, not namespace.
+      - op: add
+        path: /spec/source/helm/valuesObject/networkPolicy
+        value:
+          s3:
+            - to: [{ipBlock: {cidr: 172.29.0.10/32}}]
+              ports: [{port: 8443, protocol: TCP}]
   # Base domain: *.relay-b.localtest.me resolves to 127.0.0.1.
   - target: {kind: Gateway, name: relay}
     patch: |-

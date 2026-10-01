@@ -14,7 +14,13 @@ resources:
   - ../../platform/keycloak
   - ../../platform/argo-workflows
   - ../../platform/observability
+  - ../../apps
 patches:
+  # relay-api: its hostname, and the admin app origin allowed by CORS.
+  - target: {kind: Application, name: relay-api}
+    patch: |-
+      - {op: replace, path: /spec/source/helm/valuesObject/hostname, value: api.relay.provider-b.example}
+      - {op: replace, path: /spec/source/helm/valuesObject/corsAllowedOrigins, value: ['https://admin.relay.provider-b.example']}
   # Base domain.
   - target: {kind: Gateway, name: relay}
     patch: |-

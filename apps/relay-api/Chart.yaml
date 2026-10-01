@@ -1,0 +1,9 @@
+apiVersion: v2
+name: relay-api
+description: >-
+  Relay's Go API (relay-api), its River worker (relay-worker), and the migration Job (relay-migrate),
+  all from one image. Deployed by the Argo CD Application in apps/relay-api.application.yaml.
+type: application
+version: 0.1.0
+# The chart does not pin the app: each environment sets image.digest (see values.yaml).
+appVersion: "0.1.0"

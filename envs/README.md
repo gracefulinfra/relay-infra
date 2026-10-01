@@ -45,6 +45,17 @@ Each knob is listed with the base manifest it patches, what `local` sets, and wh
 | **Grafana URL** | `HTTPRoute/grafana` hostname and the `grafana` Application's `grafana.ini.server.root_url` | `grafana.relay.localtest.me` | `grafana.<env domain>` |
 | **Workflow parallelism** | `argo-workflows` `controller.parallelism` | `1`: the laptop profile runs heavy jobs one at a time | Unset, or sized to the node pool |
 
+## App knobs
+
+Relay's own apps (`apps/`) take environment values through their Application's `helm.valuesObject`.
+
+| Knob | Base (`apps/relay-api.application.yaml`) | `local` | Provider overlay |
+| --- | --- | --- | --- |
+| **relay-api image** | `image.digest`: the release pin, shared by every env | Same | Same, unless an env deliberately lags |
+| **relay-api hostname** | `api.relay.example.invalid` | `api.relay.localtest.me` | `api.<env domain>` |
+| **CORS origins** | none | `https://admin.relay.localtest.me` | The env's admin origin |
+| **relay-api S3 egress** | chart default: the `seaweedfs` namespace, port 8333 | Default | The managed S3 endpoint (`local-b`: `ipBlock` of `EXTERNAL_S3_IP`, port 8443, checked against `env.sh` by `make test`) |
+
 Rules:
 
 - A knob is added to this table in the same PR that introduces it.

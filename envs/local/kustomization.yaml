@@ -13,10 +13,16 @@ resources:
   - ../../platform/keycloak
   - ../../platform/argo-workflows
   - ../../platform/observability
+  - ../../apps
 components:
   # Secrets: ESO's Kubernetes provider reads what scripts/secrets.sh generated in relay-secret-source.
   - ../components/local-secrets
 patches:
+  # relay-api: its hostname, and the admin app origin allowed by CORS.
+  - target: {kind: Application, name: relay-api}
+    patch: |-
+      - {op: replace, path: /spec/source/helm/valuesObject/hostname, value: api.relay.localtest.me}
+      - {op: replace, path: /spec/source/helm/valuesObject/corsAllowedOrigins, value: ['https://admin.relay.localtest.me']}
   # Base domain: *.relay.localtest.me resolves to 127.0.0.1.
   - target: {kind: Gateway, name: relay}
     patch: |-

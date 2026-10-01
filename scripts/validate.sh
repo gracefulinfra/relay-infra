@@ -77,6 +77,10 @@ check_env_settings() {
     [ "$(yq .network "$k3d")" = "$(env_var "$env" EXTERNAL_S3_NETWORK)" ] ||
       die "envs/$env: $k3d network differs from env.sh EXTERNAL_S3_NETWORK"
   fi
+  if [ "$(env_var "$env" S3_MODE)" = external ]; then
+    got=$(yq 'select(.kind == "Application" and .metadata.name == "relay-api") | .spec.source.helm.valuesObject.networkPolicy.s3[].to[].ipBlock.cidr' "$built")
+    [ "$got" = "$(env_var "$env" EXTERNAL_S3_IP)/32" ] || die "envs/$env: relay-api S3 egress is '$got', env.sh EXTERNAL_S3_IP is $(env_var "$env" EXTERNAL_S3_IP)"
+  fi
   [ "$(yq .metadata.name "$k3d")" = "$(env_var "$env" CLUSTER_NAME)" ] || die "envs/$env: $k3d name differs from env.sh CLUSTER_NAME"
   [ "$(yq .registries.create.name "$k3d")" = "$(env_var "$env" REGISTRY_NAME)" ] || die "envs/$env: $k3d registry differs from env.sh REGISTRY_NAME"
   log "envs/$env: env.sh agrees with the overlay and $k3d"
@@ -114,6 +118,58 @@ render_env() {
     helm template "$release" "$tgz" --namespace "$namespace" --values "$values" --include-crds \
       --kube-version "$KUBERNETES_VERSION" >"$out/$env/helm/$name.yaml"
   done <<<"$apps"
+
+  # Every Application over a chart in this repository (apps/): render it from the working tree.
+  local local_apps
+  local_apps=$(yq 'select(.kind == "Application" and .spec.source.path != null and (.spec.source.path | test("^apps/")))
+    | [.metadata.name, .spec.source.path, .spec.destination.namespace, (.spec.source.helm.releaseName // .metadata.name)] | join(" ")' "$built")
+  while read -r name path namespace release; do
+    [ -n "$name" ] || continue
+    local values="$out/$env/helm/$name.values.yaml"
+    yq ea "select(.kind == \"Application\" and .metadata.name == \"$name\") | .spec.source.helm.valuesObject // {}" \
+      "$built" >"$values"
+    helm template "$release" "$path" --namespace "$namespace" --values "$values" \
+      --kube-version "$KUBERNETES_VERSION" >"$out/$env/helm/$name.yaml"
+  done <<<"$local_apps"
+}
+
+# norm_image: drop the registry host and Docker Hub's library/ prefix, and map the one project that
+# publishes under a different name per registry (Prometheus: prom/ on Docker Hub, prometheus/ on quay.io).
+norm_image() { sed -E 's#^[a-z0-9.-]+\.[a-z]+(:[0-9]+)?/##; s#^library/##; s#^prom/#prometheus/#'; }
+
+# check_compose_pins <rendered env dir>: every image the Compose dev stack runs (ADR 0009) must be the
+# image the platform runs, at the same tag. PostgreSQL differs by design (the official image locally,
+# the CNPG operand in the cluster), and so does Grafana's image variant, so only their versions are compared.
+check_compose_pins() {
+  local dir=$1 images img ref pg_dev pg_cnpg
+  # Each platform image as repo:tag and, when pinned, repo@digest (some charts render only the digest).
+  images=$(cat "$dir"/kustomize.yaml "$dir"/helm/*.yaml | grep -oE 'image: *"?[^" ]+' | sed -E 's/image: *"?//' |
+    norm_image | awk '{print; if (sub(/@sha256:.*/, "")) print}' |
+    awk '{print; if (match($0, /:[^:@\/]+@sha256:/)) print substr($0, 1, RSTART - 1) substr($0, index($0, "@"))}' | sort -u)
+  for img in $(yq '.services[].image' compose/compose.yaml | sort -u); do
+    ref=$(norm_image <<<"$img" | sed -E 's#@sha256:.*##')
+    case $ref in
+      postgres:*)
+        pg_dev=$(sed -E 's/^postgres:([0-9.]+).*/\1/' <<<"$ref")
+        pg_cnpg=$(yq 'select(.kind == "Cluster" and .metadata.name == "relay") | .spec.imageName' "$dir/kustomize.yaml" | sed -E 's/.*:([0-9.]+)-.*/\1/')
+        [ "$pg_dev" = "$pg_cnpg" ] || die "compose PostgreSQL $pg_dev differs from the CNPG operand $pg_cnpg"
+        ;;
+      chrislusf/seaweedfs:*)
+        [ "$img" = "$(sed -n 's/^SEAWEEDFS_IMAGE ?= //p' "$REPO_ROOT/Makefile")" ] ||
+          die "compose SeaweedFS $img differs from the Makefile SEAWEEDFS_IMAGE"
+        ;;
+      grafana/grafana:*)
+        # The platform chart runs the -distroless variant; the dev stack keeps the standard image for its
+        # built-in HEALTHCHECK. Same Grafana version either way.
+        grep -qE "^grafana/grafana:${ref#*:}(-distroless)?$" <<<"$images" ||
+          die "compose Grafana $ref differs from the platform ($(grep -F grafana/grafana: <<<"$images" | tr '\n' ' '))"
+        ;;
+      *)
+        grep -qxF "$ref" <<<"$images" || grep -qxF "${ref%%:*}@${img##*@}" <<<"$images" || die "compose image $ref is not what the platform runs (platform: $(grep -F "${ref%%:*}:" <<<"$images" | tr '\n' ' '))"
+        ;;
+    esac
+  done
+  log "compose dev stack images match the platform pins"
 }
 
 render() {
@@ -126,6 +182,7 @@ render() {
   for env in "${envs[@]}"; do
     log "rendering envs/$env"
     render_env "$env" "$out"
+    [ "$env" != local ] || check_compose_pins "$out/$env"
     mkdir -p "$out/$env/schemas"
     for f in "$out/$env"/helm/*.yaml; do
       [[ $f == *.values.yaml ]] || crd_schemas "$f" "$out/$env/schemas"

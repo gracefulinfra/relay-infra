@@ -1,0 +1,43 @@
+# relay-api: the API, the River worker, and the migration Job (chart: apps/relay-api).
+# The source follows relay-root's own repository and revision: bootstrap/root-app.yaml patches every
+# Application labelled relay.dev/source=relay-infra, so LOCAL_GIT=1 and branch checkouts deploy this
+# chart from the same tree as the rest of the environment.
+# Sync wave 10: after the platform (the database, External Secrets, the Gateway, the collector).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: relay-api
+  namespace: argocd
+  labels:
+    relay.dev/source: relay-infra
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  project: apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: relay
+  source:
+    repoURL: https://github.com/gracefulinfra/relay-infra.git
+    targetRevision: main
+    path: apps/relay-api
+    helm:
+      releaseName: relay-api
+      valuesObject:
+        image:
+          # The release pin: the digest relay-api CI pushed and signed from main. Bumping it is the deploy.
+          # relay-api 52b7b59 (P1-01, gracefulinfra/relay-api#4); signature verified in run 36882302617.
+          digest: sha256:bf3738f0381a3c30b6023a6e3a41188d0b17b5f5aac3b1915e6b8c4760ede26f
+        hostname: api.relay.example.invalid
+        corsAllowedOrigins: []
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    # Two retries ride out a database blip. A failing migration is not transient, and each retry re-runs
+    # the Job (up to backoffLimit + 1 pods), so more retries only add noise.
+    retry:
+      limit: 2
+      backoff: {duration: 10s, factor: 2, maxDuration: 1m}
