@@ -26,7 +26,8 @@ spec:
       valuesObject:
         image:
           # The release pin: the digest relay-api CI pushed and signed from main. Bumping it is the deploy.
-          digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+          # relay-api 52b7b59 (P1-01, gracefulinfra/relay-api#4); signature verified in run 36882302617.
+          digest: sha256:bf3738f0381a3c30b6023a6e3a41188d0b17b5f5aac3b1915e6b8c4760ede26f
         hostname: api.relay.example.invalid
         corsAllowedOrigins: []
   syncPolicy:
