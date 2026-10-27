@@ -72,13 +72,13 @@ pod stdout/stderr ─filelog─┘      │
                                    ├─ traces  ─▶ Tempo (monolithic, local disk, 24 h)
                                    ├─ metrics ─▶ Prometheus OTLP receiver (2 d or 1 GB)
                                    └─ logs    ─▶ s3://relay-logs/otel/year=/month=/day=/hour=/minute=/*.json.gz
-Prometheus also scrapes itself and pods/Services annotated prometheus.io/scrape: "true".
+Prometheus also scrapes itself and pods/Services annotated prometheus.io/scrape: "true", minus Envoy Gateway and Tempo.
 Grafana (https://grafana.<domain>) reads Prometheus and Tempo.
 ```
 
 | Service | Where | Notes |
 | --- | --- | --- |
-| Prometheus | `observability` | The plain `prometheus` chart: one server, **no operator and no CRDs**, 2 d or 1 GB retention on a 2 Gi PVC, OTLP receiver on. It scrapes itself and anything annotated `prometheus.io/scrape: "true"` (Tempo is). Relay services push metrics over OTLP instead of being scraped. **Alertmanager is off** until P1-18 defines alert routing. Not routed |
+| Prometheus | `observability` | The plain `prometheus` chart: one server, **no operator and no CRDs**, 2 d or 1 GB retention on a 2 Gi PVC, OTLP receiver on. It scrapes itself and anything annotated `prometheus.io/scrape: "true"` (relay-api and relay-worker on their ops port, cert-manager), except Envoy Gateway and Tempo, which are dropped by relabelling to fit the laptop profile. OTLP metrics arrive through the collector. **Alertmanager is off** until P1-18 defines alert routing. Not routed |
 | Grafana | `observability` | `https://grafana.<domain>`. The login is in `relay-secret-source/grafana-admin` (generated; never a chart default). Two provisioned datasources, Prometheus (`uid: prometheus`) and Tempo (`uid: tempo`), with no bundled dashboards and Grafana alerting off. No persistence |
 | Tempo | `observability` | Tempo 3 monolithic (no Kafka), OTLP only, 24 h retention on a 4 Gi PVC. Not routed; query it through Grafana |
 | OTel Collector | `observability` | contrib image (the `awss3` exporter), one pod per node. Pods send OTLP to `otel-collector.observability.svc:4317/4318` (`internalTrafficPolicy: Local`). The `filelog` receiver reads `/var/log/pods`, which needs uid 0: every capability is dropped and the root filesystem is read-only. Logs are batched (30 s or 5,000 records) into gzipped OTLP JSON objects in `relay-logs` with the `otel` identity, which can write only that bucket |
