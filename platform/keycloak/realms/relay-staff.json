@@ -43,12 +43,74 @@
       "lastName": "Test",
       "enabled": true,
       "credentials": [
-        { "type": "password", "value": "${RELAY_STAFF_PASSWORD}", "temporary": false },
+        {
+          "type": "password",
+          "value": "${RELAY_STAFF_PASSWORD}",
+          "temporary": false
+        },
         {
           "type": "otp",
           "userLabel": "relay test authenticator",
           "secretData": "{\"value\":\"${RELAY_STAFF_TOTP_SECRET}\"}",
           "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}"
+        }
+      ]
+    }
+  ],
+  "accessTokenLifespan": 300,
+  "clients": [
+    {
+      "clientId": "relay-api",
+      "name": "Relay API (resource server)",
+      "enabled": true,
+      "publicClient": false,
+      "bearerOnly": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "protocol": "openid-connect",
+      "attributes": {
+        "client.secret.creation.time": "0"
+      }
+    },
+    {
+      "clientId": "relay-admin",
+      "name": "Relay admin app",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "protocol": "openid-connect",
+      "redirectUris": [
+        "https://admin.relay.localtest.me/*",
+        "http://localhost:5173/*"
+      ],
+      "webOrigins": [
+        "https://admin.relay.localtest.me",
+        "http://localhost:5173"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "https://admin.relay.localtest.me/*##http://localhost:5173/*"
+      },
+      "defaultClientScopes": [
+        "web-origins",
+        "profile",
+        "email",
+        "roles"
+      ],
+      "protocolMappers": [
+        {
+          "name": "relay-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "relay-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
         }
       ]
     }
