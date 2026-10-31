@@ -23,6 +23,7 @@ patches:
     patch: |-
       - {op: replace, path: /spec/source/helm/valuesObject/hostname, value: api.relay.localtest.me}
       - {op: replace, path: /spec/source/helm/valuesObject/corsAllowedOrigins, value: ['https://admin.relay.localtest.me']}
+      - {op: replace, path: /spec/source/helm/valuesObject/staffAuth/issuer, value: https://auth.relay.localtest.me/realms/relay-staff}
   # Base domain: *.relay.localtest.me resolves to 127.0.0.1.
   - target: {kind: Gateway, name: relay}
     patch: |-

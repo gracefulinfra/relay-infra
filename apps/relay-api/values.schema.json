@@ -3,7 +3,7 @@
   "title": "relay-api chart values",
   "type": "object",
   "additionalProperties": false,
-  "required": ["image", "hostname", "gateway", "database", "otel", "api", "worker", "migrate", "networkPolicy"],
+  "required": ["image", "hostname", "gateway", "staffAuth", "database", "otel", "api", "worker", "migrate", "networkPolicy"],
   "$defs": {
     "resources": {
       "type": "object",
@@ -55,6 +55,16 @@
     },
     "corsAllowedOrigins": {"type": "array", "items": {"type": "string", "pattern": "^https?://[^/*]+$"}},
     "logLevel": {"enum": ["debug", "info", "warn", "error"]},
+    "staffAuth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["issuer", "jwksUrl", "audience"],
+      "properties": {
+        "issuer": {"type": "string", "pattern": "^https?://[^/@]+/.+$"},
+        "jwksUrl": {"type": "string", "pattern": "^https?://[^/@]+/.+$"},
+        "audience": {"type": "string", "minLength": 1}
+      }
+    },
     "database": {
       "type": "object",
       "additionalProperties": false,

@@ -11,6 +11,9 @@ data:
   RELAY_LOG_LEVEL: {{ .Values.logLevel | quote }}
   RELAY_DB_MAX_CONNS: {{ .Values.database.maxConns | quote }}
   RELAY_CORS_ALLOWED_ORIGINS: {{ join "," .Values.corsAllowedOrigins | quote }}
+  RELAY_OIDC_ISSUER: {{ .Values.staffAuth.issuer | quote }}
+  RELAY_OIDC_JWKS_URL: {{ .Values.staffAuth.jwksUrl | quote }}
+  RELAY_OIDC_AUDIENCE: {{ .Values.staffAuth.audience | quote }}
   OTEL_TRACES_EXPORTER: otlp
   OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.otel.endpoint | quote }}
   OTEL_EXPORTER_OTLP_INSECURE: "true"

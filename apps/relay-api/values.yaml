@@ -23,6 +23,14 @@ corsAllowedOrigins: []
 
 logLevel: info
 
+# Staff authentication (P1-02): tokens from the relay-staff realm. issuer must equal the iss claim, which
+# is Keycloak's public URL (KC_HOSTNAME). jwksUrl is fetched in-cluster, so it uses the service and needs
+# no TLS or public DNS. Required: relay-api refuses to start without an issuer.
+staffAuth:
+  issuer: https://auth.relay.example.invalid/realms/relay-staff
+  jwksUrl: http://keycloak.keycloak.svc:8080/realms/relay-staff/protocol/openid-connect/certs
+  audience: relay-api
+
 database:
   # The CNPG cluster's app-user Secret, copied from its namespace by External Secrets.
   namespace: relay-db
