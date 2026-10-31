@@ -23,7 +23,8 @@ patches:
     patch: |-
       - {op: replace, path: /spec/source/helm/valuesObject/hostname, value: api.relay.localtest.me}
       - {op: replace, path: /spec/source/helm/valuesObject/corsAllowedOrigins, value: ['https://admin.relay.localtest.me']}
-      - {op: replace, path: /spec/source/helm/valuesObject/staffAuth/issuer, value: https://auth.relay.localtest.me/realms/relay-staff}
+      # The JWKS URL and audience stay at the chart defaults (in-cluster Keycloak, relay-api).
+      - {op: add, path: /spec/source/helm/valuesObject/staffAuth, value: {issuer: 'https://auth.relay.localtest.me/realms/relay-staff', jwksUrl: 'http://keycloak.keycloak.svc:8080/realms/relay-staff/protocol/openid-connect/certs', audience: relay-api}}
   # Base domain: *.relay.localtest.me resolves to 127.0.0.1.
   - target: {kind: Gateway, name: relay}
     patch: |-
