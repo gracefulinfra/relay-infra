@@ -17,7 +17,7 @@ services:
   postgres:
     <<: *hardening
     # The same PostgreSQL major and minor as the CNPG clusters (docs/version-matrix.md).
-    image: docker.io/library/postgres:17.11-trixie@sha256:d74eeac9a635390a49bc21bd49fccd973de707e2a53a76ac49b552b8712ec46f
+    image: docker.io/library/postgres:17.11-trixie@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run scripts/dev.sh}
       RELAY_DB_PASSWORD: ${RELAY_DB_PASSWORD:?run scripts/dev.sh}
@@ -35,7 +35,7 @@ services:
   seaweedfs:
     <<: *hardening
     # The same image as the S3 conformance target (Makefile SEAWEEDFS_IMAGE) and platform/seaweedfs.
-    image: docker.io/chrislusf/seaweedfs:4.47@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882
+    image: docker.io/chrislusf/seaweedfs:4.53@sha256:ccad23e18639c8b98cee17e7100b95830a06077b56d8e5b006d6dcf8ec5e94a0
     # The IAM config (built by scripts/dev.sh from the per-consumer identities) arrives base64-encoded
     # through env_file, not a bind mount: on Linux the image's `seaweed` user cannot read a mode-600
     # host file. This is SEAWEEDFS_ENTRYPOINT in scripts/lib.sh, for the one file.
@@ -62,7 +62,7 @@ services:
 
   # One-shot: the four private buckets, as platform/seaweedfs creates them.
   seaweedfs-buckets:
-    image: docker.io/chrislusf/seaweedfs:4.47@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882
+    image: docker.io/chrislusf/seaweedfs:4.53@sha256:ccad23e18639c8b98cee17e7100b95830a06077b56d8e5b006d6dcf8ec5e94a0
     depends_on: {seaweedfs: {condition: service_healthy}}
     entrypoint: ["sh", "-c"]
     command:
@@ -73,7 +73,7 @@ services:
 
   keycloak:
     <<: *hardening
-    image: quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c
+    image: quay.io/keycloak/keycloak:26.8.2@sha256:3879c623248408de29a5303178b5816c77e8dfef3890c361f8c0bbeaa979ba3b
     command: ["start-dev", "--import-realm"]
     depends_on: {postgres: {condition: service_healthy}}
     environment:
@@ -114,7 +114,7 @@ services:
   otel-collector:
     <<: *hardening
     profiles: [observability]
-    image: docker.io/otel/opentelemetry-collector-contrib:0.160.0@sha256:799dc6cf12c96192af37b5bdba804da8c10b3bc563b43cb90c3f3c58d9572ad6
+    image: docker.io/otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea
     command: ["--config=/etc/otelcol/config.yaml"]
     depends_on:
       seaweedfs-buckets: {condition: service_completed_successfully}
@@ -130,7 +130,7 @@ services:
   tempo:
     <<: *hardening
     profiles: [observability]
-    image: docker.io/grafana/tempo:3.0.3@sha256:0296560ac66f8a3600d7fb3014a52c189d4d9c3549ad6ff441bf2409855d68d5
+    image: docker.io/grafana/tempo:3.1.1@sha256:64e2fbd56d9c2b3412a4b430a58ea59e91a670b1e75f920a0c702213ad145044
     command: ["-config.file=/etc/tempo.yaml"]
     user: "10001"
     volumes: ["./config/tempo.yaml:/etc/tempo.yaml:ro", "tempo:/var/tempo"]
@@ -139,7 +139,7 @@ services:
   prometheus:
     <<: *hardening
     profiles: [observability]
-    image: docker.io/prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
+    image: docker.io/prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
@@ -153,7 +153,7 @@ services:
   grafana:
     <<: *hardening
     profiles: [observability]
-    image: docker.io/grafana/grafana:13.2.2@sha256:ac461fb352abc50da10a51c7d02462e9c05488f11f53f14b3ad79a8145f638a0
+    image: docker.io/grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205
     environment:
       GF_SECURITY_ADMIN_USER: relay-admin
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?run scripts/dev.sh}
