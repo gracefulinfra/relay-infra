@@ -33,7 +33,7 @@ env_var() {
 
 # Pinned CLI tools that are installed with `go install` into .local/bin.
 # renovate: datasource=github-releases depName=mikefarah/yq
-YQ_VERSION=${YQ_VERSION:-4.53.6}
+YQ_VERSION=${YQ_VERSION:-4.54.3}
 # renovate: datasource=github-releases depName=yannh/kubeconform
 KUBECONFORM_VERSION=${KUBECONFORM_VERSION:-0.8.0}
 
@@ -67,7 +67,7 @@ go_tool() {
 yq() { "$(go_tool yq "github.com/mikefarah/yq/v4@v$YQ_VERSION")" "$@"; }
 kubeconform() { "$(go_tool kubeconform "github.com/yannh/kubeconform/cmd/kubeconform@v$KUBECONFORM_VERSION")" "$@"; }
 # renovate: datasource=github-releases depName=rclone/rclone
-RCLONE_VERSION=${RCLONE_VERSION:-1.75.1}
+RCLONE_VERSION=${RCLONE_VERSION:-1.76.0}
 # renovate: datasource=github-releases depName=FiloSottile/age
 AGE_VERSION=${AGE_VERSION:-1.3.2}
 rclone() { "$(go_tool rclone "github.com/rclone/rclone@v$RCLONE_VERSION")" "$@"; }

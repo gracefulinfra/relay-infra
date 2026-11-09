@@ -5,9 +5,9 @@ SHELL := /bin/bash
 YAMLLINT_VERSION ?= 1.38.0
 SHELLCHECK_IMAGE ?= docker.io/koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d
 # renovate: datasource=github-releases depName=golangci/golangci-lint
-GOLANGCI_LINT_VERSION ?= 2.14.0
+GOLANGCI_LINT_VERSION ?= 2.15.0
 # The S3 conformance target in Docker. Keep the tag equal to the chart in platform/seaweedfs (scripts/s3-conformance.sh checks).
-SEAWEEDFS_IMAGE ?= docker.io/chrislusf/seaweedfs:4.47@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882
+SEAWEEDFS_IMAGE ?= docker.io/chrislusf/seaweedfs:4.53@sha256:ccad23e18639c8b98cee17e7100b95830a06077b56d8e5b006d6dcf8ec5e94a0
 
 .PHONY: help up down stop dev dev-smoke dev-env dev-down dev-users sync smoke wait secrets argocd-password keycloak-test-users test lint vuln conformance-s3 conformance-s3-cluster conformance-s3-external portability portability-report portability-down build image
 
