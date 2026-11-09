@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   validate:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     steps:
@@ -41,7 +41,7 @@ jobs:
   # P0-06: the S3 conformance suite against the SeaweedFS version platform/seaweedfs deploys, started in
   # Docker with per-run random credentials. Any hard-case failure fails the job; the report is attached.
   s3-conformance:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -75,7 +75,7 @@ jobs:
   # The Compose dev stack (ADR 0009) on a clean runner: make dev with the observability profile, then
   # the dev smoke test (PostgreSQL, S3 identities and privacy, Keycloak TOTP login, OTLP paths).
   dev-stack:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -101,7 +101,7 @@ jobs:
   # The "clean machine" run: a fresh runner creates the k3d cluster, reconciles envs/local from this
   # commit (LOCAL_GIT=1 serves the checkout from the in-cluster git server), and runs the smoke test.
   e2e:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     permissions:
       contents: read
